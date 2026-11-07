@@ -1,0 +1,26 @@
+/* Spielchen design tokens — shared by TV and phone */
+:root {
+  --bg: #0F1115;
+  --surface: #181B22;
+  --line: #2A2F3A;
+  --text: #F4F1EA;
+  --muted: #9AA0AA;
+
+  --act: #4D7CFE;     /* blue — Quentin Tarantin-Show */
+  --draw: #FF5FA2;    /* pink — Albrecht Doodler */
+  --words: #FFD23F;   /* yellow — Goethe Talking (dark text on it) */
+  --brains: #2ED19A;  /* green — Angela Merk-All */
+  --alert: #E5484D;   /* Deutsche Bahn, Failed */
+
+  --on-act: #F4F1EA;
+  --on-draw: #0F1115;
+  --on-words: #0F1115;
+  --on-brains: #0F1115;
+
+  --font-display: "Bricolage Grotesque", system-ui, sans-serif;
+  --font-ui: "Inter", system-ui, sans-serif;
+
+  --radius: 20px;
+  --square: 120px;
+  --token: 56px;
+}

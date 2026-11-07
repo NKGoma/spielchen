@@ -32,13 +32,20 @@ export const SCHEMA = `{
   "hint_en": "one line explaining the German reference, or null"
 }`;
 
-export function systemPrompt({ germanPct = 25, cleanPct = 70 } = {}) {
+export function systemPrompt({ germanPct = 25, cleanPct = 70, topics = [], only = false } = {}) {
+  const focus = topics.length && only
+    ? `- TOPIC RULE (most important): the group asked for ONLY these topics: ${topics.join('; ')}. EVERY card in EVERY category must be clearly about them - no exceptions, no general-knowledge filler. Adapt each mini-game to the topics (for example, for music: charades of famous music videos or band names, Hum It of songs, scenes at a concert or festival, Pictionary of instruments, Taboo of genres or artists, quiz questions about musicians, estimates about chart records). Any German-life cards must also be about these topics.
+`
+    : topics.length
+      ? `- TOPIC RULE: the group asked for these topics: ${topics.join('; ')}. Make about half of the cards clearly about them and keep the rest varied.
+`
+      : '';
   return `You write cards for Spielchen, a fast party board game for 3-6 well-educated adults in their 30s who live in Germany and come from different countries. Some are native Germans, others moved here. They may have just met. The goal is laughter, not difficulty.
 
 Rules:
 - English only. German words are welcome as flavour; every German-specific card sets german:true and gives a one-line hint_en for non-Germans.
 - Everything must be guessable by an international group: famous films, songs, people, places, and everyday life in Germany. No niche references.
-- Mix: about ${germanPct}% German-life cards, the rest international (Europe-leaning, global pop culture).
+${focus}- Mix: about ${germanPct}% German-life cards, the rest international (Europe-leaning, global pop culture).${topics.length && only ? ' The topic rule above comes first.' : ''}
 - German cards must be fun for native Germans too: real trivia, funny everyday situations, culture. Never ask what a German word means or translate a German word - that is a giveaway for the Germans at the table.
 - Brains cards are mostly general knowledge from around the world: geography, science, history, film, music, sport.
 - Tone: about ${cleanPct}% clean and clever, the rest a bit cheeky. Never crude, sexual, or mean. No jokes that punch down at nationalities, religions or groups.
@@ -46,22 +53,22 @@ Rules:
 - Brains cards: only well-established facts you are certain of. If unsure, skip it. Answers must be short.
 - Hum It cards: give song title in prompt and artist in answer. Never write lyrics.
 - Difficulty mix: 40% easy, 40% medium, 20% hard.
-- If the user prompt lists the group's topics, make about half the cards about those topics and keep the rest varied. Brains facts stay strictly factual.
+- Brains facts stay strictly factual, whatever the topic.
 - Do not use anything from the AVOID list.
 - Output ONLY a JSON array of card objects matching the schema. No prose, no markdown.`;
 }
 
-export function userPrompt({ category, avoid = [], examples = [], topics = [], rng = Math.random }) {
+export function userPrompt({ category, avoid = [], examples = [], topics = [], only = false, rng = Math.random }) {
   const counts = GAME_COUNTS[category];
   const count = Object.values(counts).reduce((a, b) => a + b, 0);
   const nudge = NUDGES[Math.floor(rng() * NUDGES.length)];
   return `Category: ${category}
 Allowed games and how many of each: ${Object.entries(counts).map(([g, n]) => `${g}: ${n}`).join(', ')}
 Count: ${count}
-${topics.length ? `The group's topics: ${topics.join('; ')}` : `Theme nudge: ${nudge}`}
+${topics.length ? `The group's topics${only ? ' (EVERY card must be about these)' : ''}: ${topics.join('; ')}` : `Theme nudge: ${nudge}`}
 AVOID: ${avoid.length ? avoid.join(' | ') : '(nothing yet)'}
 Schema: ${SCHEMA}
-Two example cards: ${JSON.stringify(examples.slice(0, 2))}`;
+Two example cards (for the JSON format only - ignore their topics): ${JSON.stringify(examples.slice(0, 2))}`;
 }
 
 /** Pull the first complete JSON array out of a reply (tolerates prose or code fences around it). */
@@ -115,13 +122,16 @@ export async function generateCategory({ category, key, model, settings, seen, b
   const text = await call({
     key, model,
     system: systemPrompt(settings),
-    user: userPrompt({ category, avoid, examples: backup, topics: (settings && settings.topics) || [], rng }),
+    user: userPrompt({ category, avoid, examples: backup, topics: (settings && settings.topics) || [], only: !!(settings && settings.only), rng }),
     maxTokens: 8000,
     timeoutMs: 25000,
   });
   const cards = cleanCards(extractArray(text), category, seen);
   const fresh = cards.length;
-  if (cards.length < 6) cards.push(...backup.filter(c => !seen.has(seenKey(c))).slice(0, 6 - cards.length + 4));
+  // Top up a short category from the backup deck, unless the group asked for only certain topics:
+  // off-topic backup cards are exactly what they don't want (a few on-topic cards just repeat sooner).
+  const onlyTopics = settings && settings.only && (settings.topics || []).length;
+  if (cards.length < 6 && !(onlyTopics && cards.length >= 2)) cards.push(...backup.filter(c => !seen.has(seenKey(c))).slice(0, 6 - cards.length + 4));
   return { cards, fresh };
 }
 

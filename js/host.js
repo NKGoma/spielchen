@@ -8,7 +8,7 @@ import { commentFor } from './commentary.js';
 import { HostNet, makeRoomCode } from './net.js';
 import { generateDeck, GEN_CATEGORIES } from './generate.js';
 import { getKey, setKey, testKey, complete, friendlyError, MODELS, DEFAULT_MODEL } from './llm.js';
-import { BRIEF_CHIPS, BRIEF_SYSTEM, SURPRISE, briefPrompt, parseBrief, topicsFromText } from './brief.js';
+import { BRIEF_CHIPS, BRIEF_SYSTEM, SURPRISE, briefPrompt, parseBrief, applyLocally, briefSummary } from './brief.js';
 
 // ---------- utilities ----------
 const $ = sel => document.querySelector(sel);
@@ -70,13 +70,14 @@ const store = {
   deckGenId: null,
   prefetching: false,
   keyMsg: '',
-  brief: Object.assign({ messages: [], topics: [], chat: [] }, lsGet('spielchen.brief', {})),
+  brief: Object.assign({ topics: [], only: false, chat: [] }, lsGet('spielchen.brief', {})),
+  waitStart: null,
   briefBusy: false,
   hadPhone: false,
   phoneLostAt: 0,
 };
-const saveBrief = () => lsSet('spielchen.brief', { messages: store.brief.messages.slice(-3), topics: store.brief.topics, chat: store.brief.chat.slice(-6) });
-const topicsKey = () => JSON.stringify(store.brief.topics || []);
+const saveBrief = () => lsSet('spielchen.brief', { topics: store.brief.topics, only: !!store.brief.only, chat: store.brief.chat.slice(-6) });
+const topicsKey = () => JSON.stringify({ t: store.brief.topics || [], o: !!store.brief.only });
 const phoneMode = () => !!store.net && store.net.connected && !store.hotseat;
 
 sfx.setMuted(!store.settings.sound);
@@ -226,8 +227,7 @@ function renderSetup() {
 function joinCard(tiles) {
   const st = store.netStatus;
   if (!store.room || st === 'offline') {
-    return `<div class="join-card">
-      <div class="mini-tiles">${tiles}</div>
+    return `<div class="join-card compact">
       <div class="join-title">${icon('laptop')} Hot-seat mode</div>
       <p>The phone remote couldn't start here, so everything runs on this laptop: <kbd>Space</kbd> <kbd>Y</kbd> <kbd>N</kbd> and <kbd>1</kbd>–<kbd>6</kbd>.</p>
     </div>`;
@@ -606,7 +606,7 @@ function renderSettings() {
 }
 
 // ---------- fresh decks ----------
-const genSettings = () => ({ germanPct: store.settings.german, cleanPct: 100 - Math.round(store.settings.cheeky * 0.6), topics: store.brief.topics || [] });
+const genSettings = () => ({ germanPct: store.settings.german, cleanPct: 100 - Math.round(store.settings.cheeky * 0.6), topics: store.brief.topics || [], only: !!store.brief.only });
 
 /** Generate a deck in the background. target 'current' feeds the live game; 'next' is saved for Rematch. */
 async function runGeneration(target = 'current', { force = false } = {}) {
@@ -669,38 +669,79 @@ function renderGenStatus() {
 }
 
 // ---------- card brief chat ----------
+/** A tapped chip adds its topic (typing "only X" is how you narrow the whole deck). */
+const chipText = c => (c === SURPRISE ? c : `add ${c}`);
+
 async function sendBrief(text) {
   text = String(text || '').trim().slice(0, 160);
   if (!text || store.briefBusy) return;
   const b = store.brief;
+  const current = { topics: b.topics || [], only: !!b.only };
   const surprise = text === SURPRISE || /^surprise/i.test(text);
-  b.messages = surprise ? [] : [...b.messages, text].slice(-3);
   b.chat = [...b.chat, { from: 'me', text }].slice(-6);
   store.briefBusy = true;
   renderBriefPanel();
-  let reply, topics;
+  let next;
   if (surprise) {
-    topics = [];
-    reply = 'Surprise it is: a fun mix of film, music, travel, food and general knowledge.';
+    next = { topics: [], only: false, reply: 'Surprise it is: a fun mix of film, music, travel, food and general knowledge.' };
   } else if (!getKey()) {
-    topics = topicsFromText(b.messages);
-    reply = `Saved: ${topics.join(', ') || 'a fun mix'}. Add an API key in Settings and I'll write the cards.`;
+    const l = applyLocally(current, text);
+    next = { ...l, reply: `Saved: ${l.topics.length ? (l.only ? 'only ' : '') + l.topics.join(', ') : 'a fun mix'}. Add an API key in Settings and I'll write the cards.` };
   } else {
     try {
-      const out = await complete({ key: getKey(), model: DEFAULT_MODEL, system: BRIEF_SYSTEM, user: briefPrompt(b.messages), maxTokens: 600, timeoutMs: 15000 });
-      ({ reply, topics } = parseBrief(out, b.messages));
+      const out = await complete({ key: getKey(), model: DEFAULT_MODEL, system: BRIEF_SYSTEM, user: briefPrompt(current, text), maxTokens: 600, timeoutMs: 15000 });
+      next = parseBrief(out, current, text);
     } catch (e) {
-      topics = topicsFromText(b.messages);
-      reply = `(${friendlyError(e)}) I'll go with: ${topics.join(', ') || 'a fun mix'}.`;
+      next = parseBrief('', current, text);
+      next.reply = `(${friendlyError(e)}) ${next.reply}`;
     }
   }
-  b.topics = topics;
-  b.chat = [...b.chat, { from: 'claude', text: reply }].slice(-6);
+  b.topics = next.topics;
+  b.only = next.only;
+  b.chat = [...b.chat, { from: 'claude', text: next.reply }].slice(-6);
   store.briefBusy = false;
   saveBrief();
   try { localStorage.removeItem('spielchen.nextDeck'); } catch { /* stale: made for the old brief */ }
   renderBriefPanel();
   if (getKey()) runGeneration('current', { force: true });
+}
+
+/**
+ * Start (or rematch), but when the group asked for specific topics, wait for their cards
+ * instead of opening with off-topic backup cards. Waits up to 40 s; "Start anyway" skips.
+ */
+function requestStart(opts = {}) {
+  if (store.waitStart) return;
+  if (!getKey() || !(store.brief.topics || []).length) return startGame(opts);
+  const next = lsGet('spielchen.nextDeck', null);
+  if (next && next.cards && Object.keys(next.cards).length && (next.topics || '') === topicsKey()) return startGame(opts);
+  if (!store.gen || store.gen.used || store.gen.topics !== topicsKey()) runGeneration('current', { force: true });
+  const ready = g => g && !g.running;
+  if (ready(store.gen)) return startGame(opts);
+  store.waitStart = { opts, until: Date.now() + 40000 };
+  renderWait();
+  const iv = setInterval(() => {
+    if (!store.waitStart) return clearInterval(iv);
+    if (ready(store.gen) || Date.now() > store.waitStart.until) { clearInterval(iv); finishWait(); }
+    else renderWait();
+  }, 300);
+}
+
+function finishWait() {
+  const w = store.waitStart;
+  store.waitStart = null;
+  renderWait();
+  if (w) startGame(w.opts);
+}
+
+function renderWait() {
+  const el = $('#waitbox');
+  if (!el) return;
+  if (!store.waitStart) { el.className = ''; el.innerHTML = ''; return; }
+  el.className = 'show';
+  el.innerHTML = `<div class="wait-card"><div class="spinner"></div><h2>Writing your cards</h2><p>${esc(briefSummary(store.brief))}</p><p class="muted">${esc(genStatusText())}</p>
+    <button class="btn ghost" data-act="start-anyway">Start anyway <span class="muted small">(backup cards until they're ready)</span></button></div>`;
+  pushPhone();
 }
 
 function briefPanelInner() {
@@ -711,6 +752,7 @@ function briefPanelInner() {
     <div class="brief-chat">${intro}${chat}${store.briefBusy ? '<div class="bubble claude typing"><i></i><i></i><i></i></div>' : ''}</div>
     <div class="brief-chips">${BRIEF_CHIPS.map(c => `<button class="bchip" data-act="brief-chip" data-text="${esc(c)}">${esc(c)}</button>`).join('')}</div>
     <div class="brief-row"><input id="brief-tv" maxlength="160" placeholder="e.g. 90s music, football, less politics" autocomplete="off" spellcheck="false"><button class="btn primary small-btn" data-act="brief-send">Send</button></div>
+    <div class="brief-summary">${esc(briefSummary(b))}</div>
     <div class="brief-status" id="brief-status">${esc(genStatusText())}</div>`;
 }
 
@@ -802,10 +844,10 @@ function pushPhone() { if (store.net) store.net.broadcast(phoneState); }
 /** Messages from the controller phone. */
 function handleAction(msg) {
   const ph = store.phase;
-  if (msg.t === 'rematch' && store.screen === 'winner') return startGame({ rematch: true });
+  if (msg.t === 'rematch' && store.screen === 'winner') return requestStart({ rematch: true });
   if (msg.t === 'newgame' && store.screen === 'winner') return newGame();
-  if (msg.t === 'startgame' && store.screen === 'setup') return startGame();
-  if (msg.t === 'brief' && store.screen === 'setup') return sendBrief(msg.text);
+  if (msg.t === 'startgame' && store.screen === 'setup') return requestStart();
+  if (msg.t === 'brief' && store.screen === 'setup') return sendBrief(msg.chip ? chipText(msg.text) : msg.text);
   if (msg.t === 'skip' && store.screen === 'howto') return leaveHowTo();
   if (store.screen !== 'board' || store.busy) return;
   switch (msg.t) {
@@ -1326,7 +1368,7 @@ function handleKey(e) {
 
   if (store.screen === 'setup') {
     if (k === 'Enter' && e.target && e.target.id === 'brief-tv') { e.preventDefault(); const v = e.target.value; e.target.value = ''; sendBrief(v); return; }
-    if (k === 'Enter') { e.preventDefault(); startGame(); }
+    if (k === 'Enter') { e.preventDefault(); requestStart(); }
     else if (!inInput && k === 'h') { store.hotseat = !store.hotseat; render(); }
     else if (!inInput && k === 'f') toggleFullscreen();
     return;
@@ -1339,7 +1381,7 @@ function handleKey(e) {
 
   if (store.screen === 'howto') { if (k === ' ' || k === 'Enter') { e.preventDefault(); leaveHowTo(); } return; }
   if (store.screen === 'winner') {
-    if (k === 'r') startGame({ rematch: true });
+    if (k === 'r') requestStart({ rematch: true });
     else if (k === 'n') newGame();
     return;
   }
@@ -1471,13 +1513,14 @@ function handleClick(e) {
     }
     case 'teams': store.setup.teamMode = btn.checked; render(); break;
     case 'reshuffle': store.setup.teams = R.makeTeams(ps.map(p => p.id)); render(); break;
-    case 'start': startGame(); break;
-    case 'brief-chip': sendBrief(btn.dataset.text); break;
+    case 'start': requestStart(); break;
+    case 'start-anyway': finishWait(); break;
+    case 'brief-chip': sendBrief(chipText(btn.dataset.text)); break;
     case 'brief-send': { const i = $('#brief-tv'); if (i) { const v = i.value; i.value = ''; sendBrief(v); } break; }
     case 'skip-howto': leaveHowTo(); break;
     case 'pick-cat': pickCategory(btn.dataset.cat); break;
     case 'pick-player': if (!store.busy) pickPlayer(btn.dataset.pid); break;
-    case 'rematch': startGame({ rematch: true }); break;
+    case 'rematch': requestStart({ rematch: true }); break;
     case 'newgame': newGame(); break;
   }
 }

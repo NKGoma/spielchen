@@ -5,7 +5,7 @@ import * as R from '../js/rules.js';
 import { validateCard, Deck, GAMES_BY_CATEGORY, MINI_GAMES, seenKey } from '../js/deck.js';
 import { extractArray, cleanCards, generateDeck, userPrompt, systemPrompt } from '../js/generate.js';
 import { candidates, commentFor } from '../js/commentary.js';
-import { parseBrief, topicsFromText, briefPrompt } from '../js/brief.js';
+import { parseBrief, topicsFromText, briefPrompt, applyLocally, briefSummary } from '../js/brief.js';
 import { friendlyError, LlmError } from '../js/llm.js';
 import { HostNet } from '../js/net.js';
 
@@ -323,15 +323,42 @@ test('generateDeck: parallel calls, one failure falls back, short replies topped
 });
 
 console.log('card brief, errors, room code');
-test('parseBrief: clean JSON, JSON in prose, and garbage', () => {
-  const a = parseBrief('{"reply":"Got it: 90s hits and football.","topics":["90s music","football"]}', ['90s and football']);
-  assert.deepEqual(a.topics, ['90s music', 'football']); assert.ok(a.reply.startsWith('Got it'));
-  const b = parseBrief('Sure! {"reply":"Okay","topics":["Berlin"]} hope that helps', []);
-  assert.deepEqual(b.topics, ['Berlin']);
-  const c = parseBrief('no json at all', ['Pizza, Eurovision and cats']);
-  assert.deepEqual(c.topics, ['Pizza', 'Eurovision', 'cats']);
-  assert.deepEqual(topicsFromText(['you choose']), []);
-  assert.ok(briefPrompt(['a', 'b', 'c', 'd']).startsWith('Message 1: b'));
+test('brief: "only music" after other topics means only music', () => {
+  const cur = { topics: ['football', 'Berlin life'], only: false };
+  // No model / unparseable reply: local rules.
+  assert.deepEqual(parseBrief('', cur, 'only music'), { reply: 'Got it: only music.', topics: ['music'], only: true });
+  // The model wrongly merges the old topics: the user's "only" still wins.
+  const merged = parseBrief('{"reply":"Football, Berlin and music!","topics":["football","Berlin life","music"],"only":false}', cur, 'only music please');
+  assert.deepEqual(merged.topics, ['music']); assert.equal(merged.only, true);
+  assert.equal(merged.reply, 'Got it: only music.');
+  // A clean model answer is kept.
+  const good = parseBrief('{"reply":"Only 90s music it is.","topics":["90s music"],"only":true}', cur, 'just 90s music');
+  assert.deepEqual(good.topics, ['90s music']); assert.equal(good.reply, 'Only 90s music it is.');
+});
+test('brief: add, remove, mix and surprise', () => {
+  const cur = { topics: ['music'], only: true };
+  assert.deepEqual(applyLocally(cur, 'more Eurovision'), { topics: ['music', 'Eurovision'], only: true });
+  assert.deepEqual(applyLocally({ topics: ['music', 'football'], only: true }, 'no football'), { topics: ['music'], only: true });
+  assert.equal(parseBrief('', cur, 'mostly music, mix it with other stuff').only, false);
+  assert.deepEqual(applyLocally(cur, 'surprise me'), { topics: [], only: false });
+  assert.ok(briefPrompt(cur, 'more film').includes('CURRENT topics: music'));
+  assert.equal(briefSummary(cur), 'Every card: music');
+});
+test('only-topics: every call says EVERY card, and no off-topic backup top-up', async () => {
+  const sys = systemPrompt({ topics: ['music'], only: true });
+  assert.ok(/EVERY card in EVERY category must be clearly about them/.test(sys));
+  assert.ok(!/about half/.test(sys));
+  assert.ok(/about half/.test(systemPrompt({ topics: ['music'], only: false })));
+  const users = [];
+  // The model returns only 3 valid music cards per category: they must not be padded with backup cards.
+  const call = async ({ user }) => {
+    users.push(user);
+    const cat = /Category: (\w+)/.exec(user)[1];
+    return JSON.stringify(cards.filter(c => c.category === cat).slice(0, 3).map(c => ({ ...c, prompt: 'MUSIC ' + c.prompt })));
+  };
+  const res = await generateDeck({ key: 'k', settings: { topics: ['music'], only: true }, backupCards: cards, call });
+  assert.ok(users.every(u => u.includes('(EVERY card must be about these): music')));
+  for (const cat of Object.keys(res)) assert.ok(res[cat].every(c => c.prompt.startsWith('MUSIC')), cat);
 });
 test('generation prompt carries the topics; no topics falls back to a theme nudge', () => {
   const u = userPrompt({ category: 'act', topics: ['90s music', 'football'] });

@@ -6,7 +6,7 @@ export const GAMES_BY_CATEGORY = {
   draw: ['pictionary', 'blind', 'oneline', 'wronghand'],
   words: ['taboo', 'threewords', 'accent', 'rhyme'],
   brains: ['quiz', 'oddoneout', 'closer'],
-  allplay: ['drawoff', 'estimateoff', 'speedround'],
+  allplay: ['estimateoff', 'speedround'],
 };
 
 // `rule` is the short rule. `tv(name, card)` is what the TV says to the whole room:
@@ -27,7 +27,6 @@ export const MINI_GAMES = {
   quiz:        { name: 'Quiz',         seconds: 20, rule: 'Answer the question.', tv: n => `Question for ${n}. Answer out loud.` },
   oddoneout:   { name: 'Odd One Out',  seconds: 20, rule: 'Spot the one that doesn’t belong.', tv: n => `Question for ${n}. Which one doesn’t belong?` },
   closer:      { name: 'Closer Wins',  seconds: 20, rule: 'Guess the number.', tv: (n, c) => `Question for ${n}. Guess the number${c && c.tolerance != null ? ` — within ±${c.tolerance} counts` : ''}.` },
-  drawoff:     { name: 'Draw-Off',     seconds: 45, rule: 'Everyone draws it.', tv: () => 'Everyone draws this. Then point at the best one — not your own.' },
   estimateoff: { name: 'Estimate-Off', seconds: 30, rule: 'Everyone writes a number.', tv: () => 'Everyone secretly writes down a number. Closest wins.' },
   speedround:  { name: 'Speed Round',  seconds: 45, rule: '3 quick questions.', tv: () => '3 quick questions, one at a time. First to shout the right answer scores.' },
 };

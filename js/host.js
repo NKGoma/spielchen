@@ -1,6 +1,6 @@
 // Spielchen TV / host: state machine, rendering, keyboard (hot-seat) controls.
 import * as R from './rules.js';
-import { Deck, MINI_GAMES, CATEGORY_PLAIN, loadBackupDeck } from './deck.js';
+import { Deck, MINI_GAMES, CATEGORY_PLAIN, loadBackupDeck, validateCard } from './deck.js';
 import { sfx } from './sfx.js';
 import { icon } from './icons.js';
 import { dieHtml, tumble, momentHtml, confetti, reduceMotion } from './fx.js';
@@ -542,7 +542,7 @@ function allPlayHtml() {
     if (card.hint_en) body += `<div class="ap-hint">${icon('lightbulb')} ${esc(card.hint_en)}</div>`;
     if (ph === 'ap-ready') action = `<div class="hint-line"><kbd>Space</kbd> ${card.game === 'speedround' ? 'first question' : `start the ${mg.seconds} s timer`}</div>`;
     else if (ph === 'ap-running') action = `${timerRing(mg.seconds, 'small')}<div class="hint-line"><kbd>Space</kbd> stop early</div>`;
-    else if (ph === 'ap-pick') action = `<div class="big-line small">${card.game === 'estimateoff' ? 'Who was closest?' : 'Who drew the best one?'} +2${g.teamMode ? ' for their team' : ''}</div>${chipPicker(g.players.map(p => p.id), { nobody: true })}`;
+    else if (ph === 'ap-pick') action = `<div class="big-line small">Who was closest? +2${g.teamMode ? ' for their team' : ''}</div>${chipPicker(g.players.map(p => p.id), { nobody: true })}`;
   }
   return `<div class="ov ov-allplay">
     <div class="stripe">${R.CATEGORIES.map(c => `<i class="cat-${c}"></i>`).join('')}</div>
@@ -782,7 +782,8 @@ function deckForNewGame() {
   store.deckGenId = gen ? gen.id : null;
   const cards = [];
   for (const cat of GEN_CATEGORIES) {
-    const fresh = gen && gen.cards[cat];
+    // validateCard drops anything no longer in the game (e.g. Draw-Off cards in an old prefetched deck).
+    const fresh = gen && gen.cards[cat] && gen.cards[cat].filter(validateCard).length ? gen.cards[cat].filter(validateCard) : null;
     cards.push(...(fresh || store.backupCards.filter(c => c.category === cat)));
   }
   return cards;
@@ -834,7 +835,7 @@ function phoneState(role) {
     case 'ap-running': return { ...base, view: 'button', title: MINI_GAMES[ctx.card.game].name, text: ctx.card.prompt, label: 'Stop early', timerLeftMs };
     case 'ap-q': return { ...base, view: 'button', title: `Question ${ctx.sr.i + 1} of 3`, text: ctx.card.questions[ctx.sr.i].q, answer: ctx.card.questions[ctx.sr.i].a, label: 'Reveal the answer' };
     case 'ap-a': return { ...base, view: 'chips', title: 'Who shouted it first?', choices: chips(g.players.map(p => p.id)), nobody: true };
-    case 'ap-pick': return { ...base, view: 'chips', title: ctx.card.game === 'estimateoff' ? `Who was closest? (${ctx.card.answer})` : 'Who drew the best one?', choices: chips(g.players.map(p => p.id)), nobody: true };
+    case 'ap-pick': return { ...base, view: 'chips', title: `Who was closest? (${ctx.card.answer})`, choices: chips(g.players.map(p => p.id)), nobody: true };
     default: return { ...base, view: 'watch' };
   }
 }

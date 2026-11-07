@@ -31,7 +31,7 @@ Open Settings (the slider icon, top right), paste an Anthropic API key and press
 
 - **Act, Draw, Words:** the active player peeks at the card on the phone, taps Start, then Got it (and picks who guessed) or Failed. In teams, the teammate guesses and the other team can steal on a fail.
 - **Brains:** the question is on the TV for everyone, and the active player answers. A **quizmaster** gets the phone with the answer and judges: in free-for-all the previous player, in teams someone from another team. If the answer is wrong, others can steal. The answer is never shown to the person answering.
-- **All Play:** public on the TV. Speed Round and Estimate-Off reveal their answers one step at a time.
+- **All Play:** everyone plays at once, public on the TV: Estimate-Off (everyone writes a number, closest wins) or Speed Round (3 shout-out questions). Answers are revealed one step at a time.
 
 ## Laptop keys (backup controls)
 

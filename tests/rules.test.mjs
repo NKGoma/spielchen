@@ -422,5 +422,14 @@ test('HostNet: same room code after a server drop; new code only if the first op
   }
 });
 
+console.log('no Draw-Off');
+test('Draw-Off is gone: not in the deck, rejected by validation, never requested', () => {
+  assert.ok(!cards.some(c => c.game === 'drawoff'));
+  assert.ok(!validateCard({ id: 'x', category: 'allplay', game: 'drawoff', prompt: 'A cat', difficulty: 'easy', tone: 'clean', german: false, hint_en: null }));
+  const u = userPrompt({ category: 'allplay' });
+  assert.ok(u.includes('estimateoff: 4, speedround: 4')); assert.ok(!u.includes('drawoff'));
+  assert.equal(cards.filter(c => c.category === 'allplay').length, 16);
+});
+
 await Promise.all(pending);
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);

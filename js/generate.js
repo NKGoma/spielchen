@@ -10,7 +10,7 @@ export const GAME_COUNTS = {
   draw: { pictionary: 4, blind: 3, oneline: 3, wronghand: 4 },
   words: { taboo: 4, threewords: 3, accent: 3, rhyme: 4 },
   brains: { quiz: 6, oddoneout: 4, closer: 4 },
-  allplay: { drawoff: 3, estimateoff: 2, speedround: 3 },
+  allplay: { estimateoff: 4, speedround: 4 },
 };
 
 const NUDGES = ['summer', 'nightlife', 'food', 'travel', 'office', '90s', 'sport', 'weather'];
@@ -18,7 +18,7 @@ const NUDGES = ['summer', 'nightlife', 'food', 'travel', 'office', '90s', 'sport
 export const SCHEMA = `{
   "id": "short unique id",
   "category": "act | draw | words | brains | allplay",
-  "game": "charades | hum | scene | statue | pictionary | blind | oneline | wronghand | taboo | threewords | accent | rhyme | quiz | oddoneout | closer | drawoff | estimateoff | speedround",
+  "game": "charades | hum | scene | statue | pictionary | blind | oneline | wronghand | taboo | threewords | accent | rhyme | quiz | oddoneout | closer | estimateoff | speedround",
   "prompt": "the word, title, situation or question",
   "forbidden": ["taboo only: exactly 4 words"],
   "accent": "accent only, e.g. Scottish",

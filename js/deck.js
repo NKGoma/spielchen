@@ -9,25 +9,36 @@ export const GAMES_BY_CATEGORY = {
   allplay: ['drawoff', 'estimateoff', 'speedround'],
 };
 
+// `rule` is the short rule. `tv(name, card)` is what the TV says to the whole room:
+// who does what, and what everyone guesses. It never contains the secret.
 export const MINI_GAMES = {
-  charades:    { name: 'Charades',      rule: 'Mime a film, series or book. No sounds.', seconds: 60 },
-  hum:         { name: 'Hum It',        rule: 'Hum a song, no words.', seconds: 45 },
-  scene:       { name: 'Scene',         rule: 'Act out a situation without words.', seconds: 60 },
-  statue:      { name: 'Statue',        rule: 'Freeze into a famous pose or moment. The others guess.', seconds: 30 },
-  pictionary:  { name: 'Pictionary',    rule: 'Draw it. No letters or numbers.', seconds: 60 },
-  blind:       { name: 'Blind Artist',  rule: 'Draw it with your eyes closed.', seconds: 60 },
-  oneline:     { name: 'One Line',      rule: 'Draw it without ever lifting the pen.', seconds: 45 },
-  wronghand:   { name: 'Wrong Hand',    rule: 'Draw it with your non-dominant hand.', seconds: 60 },
-  taboo:       { name: 'Taboo',         rule: 'Explain it without the 4 forbidden words.', seconds: 60 },
-  threewords:  { name: 'Three Words',   rule: 'Exactly 3 words. Each guesser gets one guess.', seconds: 30 },
-  accent:      { name: 'Accent',        rule: 'Explain it in the accent on the card.', seconds: 60 },
-  rhyme:       { name: 'Rhyme Time',    rule: 'Say only words that rhyme with it.', seconds: 45 },
-  quiz:        { name: 'Quiz',          rule: 'Read the question out loud. Answer out loud.', seconds: 20 },
-  oddoneout:   { name: 'Odd One Out',   rule: 'Four items. Pick the one that doesn’t belong.', seconds: 20 },
-  closer:      { name: 'Closer Wins',   rule: 'Estimate the number. Close enough counts.', seconds: 20 },
-  drawoff:     { name: 'Draw-Off',      rule: 'Everyone draws it. Point at the best one — not your own.', seconds: 45 },
-  estimateoff: { name: 'Estimate-Off',  rule: 'Everyone writes a number. Closest wins.', seconds: 30 },
-  speedround:  { name: 'Speed Round',   rule: '3 quick questions. First to shout. Most correct wins.', seconds: 45 },
+  charades:    { name: 'Charades',     seconds: 60, rule: 'Mime it. No sounds.', tv: n => `${n} mimes a film, series or book. No sounds. Guess the title.` },
+  hum:         { name: 'Hum It',       seconds: 45, rule: 'Hum it. No words.', tv: n => `${n} hums a song, no words. Guess the song.` },
+  scene:       { name: 'Scene',        seconds: 60, rule: 'Act it out. No words.', tv: n => `${n} acts out a situation without words. Guess what’s going on.` },
+  statue:      { name: 'Statue',       seconds: 30, rule: 'Freeze in a famous pose.', tv: n => `${n} freezes into a famous pose. Guess who or what it is.` },
+  pictionary:  { name: 'Pictionary',   seconds: 60, rule: 'Draw it. No letters or numbers.', tv: n => `${n} draws something. No letters or numbers. Guess what it is.` },
+  blind:       { name: 'Blind Artist', seconds: 60, rule: 'Draw it with your eyes closed.', tv: n => `${n} draws with their eyes closed. Guess what it is.` },
+  oneline:     { name: 'One Line',     seconds: 45, rule: 'Never lift the pen.', tv: n => `${n} draws without lifting the pen. Guess what it is.` },
+  wronghand:   { name: 'Wrong Hand',   seconds: 60, rule: 'Use your other hand.', tv: n => `${n} draws with their wrong hand. Guess what it is.` },
+  taboo:       { name: 'Taboo',        seconds: 60, rule: 'Describe it without the 4 banned words.', tv: n => `${n} describes a secret word but can’t say 4 banned words. Guess the word.` },
+  threewords:  { name: 'Three Words',  seconds: 30, rule: 'Exactly 3 words of clues.', tv: n => `${n} gives exactly 3 words as clues. One guess each.` },
+  accent:      { name: 'Accent',       seconds: 60, rule: 'Describe it in an accent.', tv: (n, c) => `${n} describes a secret word in a ${c && c.accent ? c.accent : 'secret'} accent. Guess the word.` },
+  rhyme:       { name: 'Rhyme Time',   seconds: 45, rule: 'Only say words that rhyme with it.', tv: n => `${n} only says words that rhyme with the secret word. Guess it.` },
+  quiz:        { name: 'Quiz',         seconds: 20, rule: 'Answer the question.', tv: n => `Question for ${n}. Answer out loud.` },
+  oddoneout:   { name: 'Odd One Out',  seconds: 20, rule: 'Spot the one that doesn’t belong.', tv: n => `Question for ${n}. Which one doesn’t belong?` },
+  closer:      { name: 'Closer Wins',  seconds: 20, rule: 'Guess the number.', tv: (n, c) => `Question for ${n}. Guess the number${c && c.tolerance != null ? ` — within ±${c.tolerance} counts` : ''}.` },
+  drawoff:     { name: 'Draw-Off',     seconds: 45, rule: 'Everyone draws it.', tv: () => 'Everyone draws this. Then point at the best one — not your own.' },
+  estimateoff: { name: 'Estimate-Off', seconds: 30, rule: 'Everyone writes a number.', tv: () => 'Everyone secretly writes down a number. Closest wins.' },
+  speedround:  { name: 'Speed Round',  seconds: 45, rule: '3 quick questions.', tv: () => '3 quick questions, one at a time. First to shout the right answer scores.' },
+};
+
+/** Plain-English summary per category; the pun names are decoration. */
+export const CATEGORY_PLAIN = {
+  act: 'act it out, they guess',
+  draw: 'draw it, they guess',
+  words: 'describe it, they guess',
+  brains: 'answer a question',
+  allplay: 'everyone plays at once',
 };
 
 const DIFFS = ['easy', 'medium', 'hard'];
@@ -91,15 +102,24 @@ function shuffle(arr, rng) {
  * same mini-game twice in a row within a category. Piles refill when empty.
  */
 export class Deck {
-  constructor(cards, rng = Math.random) {
+  /** seen: ids of recently used cards (e.g. from earlier games); those go to the bottom of each pile. */
+  constructor(cards, rng = Math.random, seen = []) {
     this.rng = rng;
+    this.seen = new Set(seen);
+    this.used = [];
     this.all = {};
     this.piles = {};
     this.lastGame = {};
     for (const cat of Object.keys(GAMES_BY_CATEGORY)) {
       this.all[cat] = cards.filter(c => c.category === cat);
-      this.piles[cat] = shuffle(this.all[cat], rng);
+      this.piles[cat] = this._fresh(cat);
     }
+  }
+
+  /** Shuffled pile with unseen cards first. */
+  _fresh(cat) {
+    const all = shuffle(this.all[cat] || [], this.rng);
+    return [...all.filter(c => !this.seen.has(c.id)), ...all.filter(c => this.seen.has(c.id))];
   }
 
   /** Replace a category's cards (used later when fresh LLM cards arrive). */
@@ -112,7 +132,7 @@ export class Deck {
 
   /** opts.hard: prefer a Hard card (Finale). Falls back to medium, then anything. */
   draw(cat, opts = {}) {
-    if (!this.piles[cat] || this.piles[cat].length === 0) this.piles[cat] = shuffle(this.all[cat] || [], this.rng);
+    if (!this.piles[cat] || this.piles[cat].length === 0) { this.all[cat].forEach(c => this.seen.add(c.id)); this.piles[cat] = this._fresh(cat); }
     const pile = this.piles[cat];
     if (!pile.length) return null;
     const notSame = c => c.game !== this.lastGame[cat];
@@ -132,6 +152,7 @@ export class Deck {
       if (fromAll.length) {
         const card = fromAll[Math.floor(this.rng() * fromAll.length)];
         this.lastGame[cat] = card.game;
+        this.used.push(card.id);
         return card;
       }
     }
@@ -142,6 +163,7 @@ export class Deck {
   _take(cat, pile, idx) {
     const [card] = pile.splice(idx, 1);
     this.lastGame[cat] = card.game;
+    this.used.push(card.id);
     return card;
   }
 }

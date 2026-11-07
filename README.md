@@ -11,6 +11,14 @@ Static site: plain HTML/CSS/ES modules, no build step, no backend. Open `index.h
 - Milestone 3 — fresh LLM decks.
 - Milestone 4 — polish.
 
+## How Brains works
+
+The question appears on the TV for everyone, and the active player answers. A **quizmaster** sees the answer and judges:
+- free-for-all: the previous player
+- teams: someone from another team
+
+If the answer is wrong, others can steal. The answer is never shown to the person answering. In Milestone 2 the phone goes to the quizmaster for Brains cards.
+
 ## Run locally
 
 ```bash
@@ -25,7 +33,7 @@ Then open http://localhost:8000. (Opening the file directly with `file://` won't
 | --- | --- |
 | Enter | Start the game (setup) |
 | Space | Roll · peek at the card (6 s) · start the timer |
-| Y / N | Got it / Failed (Brains: Correct / Wrong) |
+| Y / N | Got it / Failed (Brains: the quizmaster presses Correct / Wrong) |
 | 1–6 | Pick a player (guesser, stealer, All Play winner) · 1–4 pick a category |
 | 0 | Nobody |
 | P | Peek at the card again before the timer starts |

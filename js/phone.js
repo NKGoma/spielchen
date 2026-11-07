@@ -253,7 +253,7 @@ document.addEventListener('click', e => {
     case 'claim': send({ t: 'claim' }); break;
     case 'startgame': send({ t: 'startgame' }); break;
     case 'skip': send({ t: 'skip' }); break;
-    case 'brief-chip': send({ t: 'brief', text: b.dataset.text }); break;
+    case 'brief-chip': send({ t: 'brief', text: b.dataset.text, chip: true }); break;
     case 'brief-send': { const v = $('#brief-input').value.trim(); if (v) { send({ t: 'brief', text: v }); $('#brief-input').value = ''; } break; }
     case 'rematch': send({ t: 'rematch' }); break;
     case 'newgame': send({ t: 'newgame' }); break;

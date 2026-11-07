@@ -12,8 +12,8 @@ kbd {
 .small { font-size: 24px; }
 .ic { width: 1em; height: 1em; vertical-align: -0.14em; flex: none; }
 
-#stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center; overflow: hidden; background: var(--bg); }
-#screen { position: absolute; inset: 0; }
+#stage { position: absolute; left: 50%; top: 50%; width: 1920px; height: 1080px; transform-origin: center; overflow: clip; background: var(--bg); }
+#screen { position: absolute; inset: 0; overflow: clip; }
 
 /* category colour sets (always paired with an icon + label, never colour alone) */
 .cat-act    { --cat: var(--act);    --deep: var(--act-deep);    --on: var(--on-act); }
@@ -469,3 +469,16 @@ button.tile:hover { transform: translateY(-6px); }
 .rj-text { display: flex; flex-direction: column; gap: 0; font-size: 15px; white-space: nowrap; }
 .rj-text b { font-family: var(--font-display); font-size: 22px; }
 .rj-code { font-family: var(--font-display); font-weight: 800; font-size: 40px; letter-spacing: 0.06em; line-height: 1; }
+
+/* waiting for on-topic cards */
+#waitbox { position: absolute; inset: 0; z-index: 45; display: none; background: rgba(10,12,16,.85); align-items: center; justify-content: center; }
+#waitbox.show { display: flex; }
+.wait-card { background: var(--surface); border-radius: 32px; padding: 48px 56px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 16px; max-width: 900px; box-shadow: 0 12px 0 var(--surface-deep); }
+.wait-card h2 { font-family: var(--font-display); font-weight: 800; font-size: 64px; margin: 0; }
+.wait-card p { margin: 0; font-size: 32px; font-weight: 600; }
+.spinner { width: 64px; height: 64px; border-radius: 50%; border: 7px solid var(--line); border-top-color: var(--words); animation: spinr 0.9s linear infinite; }
+@keyframes spinr { to { transform: rotate(360deg); } }
+.brief-summary { font-size: 20px; font-weight: 600; color: var(--words); }
+
+.join-card.compact { padding: 24px 28px; }
+.join-card.compact .join-title { margin-top: 0; font-size: 36px; }

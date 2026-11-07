@@ -46,18 +46,19 @@ Rules:
 - Brains cards: only well-established facts you are certain of. If unsure, skip it. Answers must be short.
 - Hum It cards: give song title in prompt and artist in answer. Never write lyrics.
 - Difficulty mix: 40% easy, 40% medium, 20% hard.
+- If the user prompt lists the group's topics, make about half the cards about those topics and keep the rest varied. Brains facts stay strictly factual.
 - Do not use anything from the AVOID list.
 - Output ONLY a JSON array of card objects matching the schema. No prose, no markdown.`;
 }
 
-export function userPrompt({ category, avoid = [], examples = [], rng = Math.random }) {
+export function userPrompt({ category, avoid = [], examples = [], topics = [], rng = Math.random }) {
   const counts = GAME_COUNTS[category];
   const count = Object.values(counts).reduce((a, b) => a + b, 0);
   const nudge = NUDGES[Math.floor(rng() * NUDGES.length)];
   return `Category: ${category}
 Allowed games and how many of each: ${Object.entries(counts).map(([g, n]) => `${g}: ${n}`).join(', ')}
 Count: ${count}
-Theme nudge: ${nudge}
+${topics.length ? `The group's topics: ${topics.join('; ')}` : `Theme nudge: ${nudge}`}
 AVOID: ${avoid.length ? avoid.join(' | ') : '(nothing yet)'}
 Schema: ${SCHEMA}
 Two example cards: ${JSON.stringify(examples.slice(0, 2))}`;
@@ -114,7 +115,7 @@ export async function generateCategory({ category, key, model, settings, seen, b
   const text = await call({
     key, model,
     system: systemPrompt(settings),
-    user: userPrompt({ category, avoid, examples: backup, rng }),
+    user: userPrompt({ category, avoid, examples: backup, topics: (settings && settings.topics) || [], rng }),
     maxTokens: 8000,
     timeoutMs: 25000,
   });

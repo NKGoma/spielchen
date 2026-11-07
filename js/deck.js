@@ -42,6 +42,9 @@ export const CATEGORY_PLAIN = {
 };
 
 const DIFFS = ['easy', 'medium', 'hard'];
+
+/** Key used to remember cards across games (by prompt, so regenerated cards dedupe too). */
+export const seenKey = c => String(c.prompt || '').toLowerCase().replace(/\s+/g, ' ').trim();
 const isStr = x => typeof x === 'string' && x.trim().length > 0;
 const isNum = x => typeof x === 'number' && isFinite(x);
 
@@ -102,7 +105,7 @@ function shuffle(arr, rng) {
  * same mini-game twice in a row within a category. Piles refill when empty.
  */
 export class Deck {
-  /** seen: ids of recently used cards (e.g. from earlier games); those go to the bottom of each pile. */
+  /** seen: keys (seenKey) of recently used cards (e.g. from earlier games); those go to the bottom of each pile. */
   constructor(cards, rng = Math.random, seen = []) {
     this.rng = rng;
     this.seen = new Set(seen);
@@ -119,7 +122,7 @@ export class Deck {
   /** Shuffled pile with unseen cards first. */
   _fresh(cat) {
     const all = shuffle(this.all[cat] || [], this.rng);
-    return [...all.filter(c => !this.seen.has(c.id)), ...all.filter(c => this.seen.has(c.id))];
+    return [...all.filter(c => !this.seen.has(seenKey(c))), ...all.filter(c => this.seen.has(seenKey(c)))];
   }
 
   /** Replace a category's cards (used later when fresh LLM cards arrive). */
@@ -132,7 +135,7 @@ export class Deck {
 
   /** opts.hard: prefer a Hard card (Finale). Falls back to medium, then anything. */
   draw(cat, opts = {}) {
-    if (!this.piles[cat] || this.piles[cat].length === 0) { this.all[cat].forEach(c => this.seen.add(c.id)); this.piles[cat] = this._fresh(cat); }
+    if (!this.piles[cat] || this.piles[cat].length === 0) { this.all[cat].forEach(c => this.seen.add(seenKey(c))); this.piles[cat] = this._fresh(cat); }
     const pile = this.piles[cat];
     if (!pile.length) return null;
     const notSame = c => c.game !== this.lastGame[cat];
@@ -152,7 +155,7 @@ export class Deck {
       if (fromAll.length) {
         const card = fromAll[Math.floor(this.rng() * fromAll.length)];
         this.lastGame[cat] = card.game;
-        this.used.push(card.id);
+        this.used.push(seenKey(card));
         return card;
       }
     }
@@ -163,7 +166,7 @@ export class Deck {
   _take(cat, pile, idx) {
     const [card] = pile.splice(idx, 1);
     this.lastGame[cat] = card.game;
-    this.used.push(card.id);
+    this.used.push(seenKey(card));
     return card;
   }
 }

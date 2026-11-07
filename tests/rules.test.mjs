@@ -2,13 +2,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as R from '../js/rules.js';
-import { validateCard, Deck, GAMES_BY_CATEGORY, MINI_GAMES } from '../js/deck.js';
+import { validateCard, Deck, GAMES_BY_CATEGORY, MINI_GAMES, seenKey } from '../js/deck.js';
+import { extractArray, cleanCards, generateDeck, userPrompt, systemPrompt } from '../js/generate.js';
 import { candidates, commentFor } from '../js/commentary.js';
 
 let passed = 0;
+const pending = [];
 const test = (name, fn) => {
-  try { fn(); passed++; console.log('  ok  ' + name); }
-  catch (e) { console.error('  FAIL ' + name + '\n       ' + e.message); process.exitCode = 1; }
+  const fail = e => { console.error('  FAIL ' + name + '\n       ' + e.message); process.exitCode = 1; };
+  try {
+    const r = fn();
+    if (r && r.then) pending.push(r.then(() => { passed++; console.log('  ok  ' + name); }, fail));
+    else { passed++; console.log('  ok  ' + name); }
+  } catch (e) { fail(e); }
 };
 
 const players = n => Array.from({ length: n }, (_, k) => ({ id: 'p' + (k + 1), name: 'P' + (k + 1), color: '#fff', emoji: 'x' }));
@@ -253,10 +259,10 @@ test('TV lines name the player and never contain the secret', () => {
   }
 });
 test('Deck serves unseen cards first', () => {
-  const seen = cards.filter(c => c.category === 'act').slice(0, 10).map(c => c.id);
+  const seen = cards.filter(c => c.category === 'act').slice(0, 10).map(seenKey);
   const d = new Deck(cards, Math.random, seen);
-  const first = Array.from({ length: 5 }, () => d.draw('act').id);
-  assert.ok(first.every(id => !seen.includes(id)), first.join(','));
+  const first = Array.from({ length: 5 }, () => seenKey(d.draw('act')));
+  assert.ok(first.every(k => !seen.includes(k)), first.join(','));
 });
 test('no "what does this German word mean" questions', () => {
   const qs = cards.flatMap(c => [c.prompt, ...(c.questions || []).map(q => q.q)]);
@@ -265,4 +271,53 @@ test('no "what does this German word mean" questions', () => {
   assert.ok(share > 0.24 && share < 0.36, 'cheeky share ' + share);
 });
 
+console.log('generation (mocked model)');
+test('extractArray finds the first JSON array through prose and fences', () => {
+  assert.deepEqual(extractArray('Sure!\n```json\n[{"a":"x]"},{"b":[1,2]}]\n``` done [9]'), [{ a: 'x]' }, { b: [1, 2] }]);
+  assert.equal(extractArray('no array here'), null);
+  assert.equal(extractArray('[{"broken": }]'), null);
+});
+test('cleanCards drops invalid, wrong-category and already-seen cards', () => {
+  const raw = [
+    { game: 'taboo', prompt: 'Pizza', forbidden: ['a', 'b', 'c', 'd'], difficulty: 'easy', tone: 'clean', german: false, hint_en: null },
+    { game: 'taboo', prompt: 'Short', forbidden: ['a'], difficulty: 'easy', tone: 'clean', german: false },
+    { game: 'charades', prompt: 'Wrong category', difficulty: 'easy', tone: 'clean', german: false },
+    { game: 'rhyme', prompt: 'Seen before', difficulty: 'easy', tone: 'clean', german: false },
+    { game: 'rhyme', prompt: 'pizza', difficulty: 'easy', tone: 'clean', german: false },
+  ];
+  const out = cleanCards(raw, 'words', new Set(['seen before']));
+  assert.deepEqual(out.map(c => c.prompt), ['Pizza']);
+  assert.ok(out[0].id.startsWith('gen-words-'));
+});
+test('closer tolerance given as a string is normalised', () => {
+  const out = cleanCards([{ game: 'closer', prompt: 'Q?', answer: 42, tolerance: '5', difficulty: 'easy', tone: 'clean', german: false }], 'brains');
+  assert.equal(out[0].tolerance, 5); assert.equal(out[0].answer, '42');
+});
+test('prompts carry the avoid list, counts and the no-translation rule', () => {
+  const u = userPrompt({ category: 'brains', avoid: ['old one'], examples: [] });
+  assert.ok(u.includes('AVOID: old one')); assert.ok(u.includes('quiz: 6')); assert.ok(u.includes('Count: 14'));
+  assert.ok(/Never ask what a German word means/.test(systemPrompt({ germanPct: 30, cleanPct: 60 })));
+  assert.ok(systemPrompt({ germanPct: 30, cleanPct: 60 }).includes('about 30% German-life'));
+});
+test('generateDeck: parallel calls, one failure falls back, short replies topped up', async () => {
+  const good = cat => JSON.stringify(cards.filter(c => c.category === cat).map(c => ({ ...c, prompt: c.prompt + ' (new)' })));
+  const calls = [];
+  const call = async ({ user }) => {
+    const cat = /Category: (\w+)/.exec(user)[1];
+    calls.push(cat);
+    if (cat === 'draw') throw new Error('boom');
+    if (cat === 'act') return '[' + JSON.stringify({ game: 'scene', prompt: 'Only one', difficulty: 'easy', tone: 'clean', german: false, hint_en: null }) + ']';
+    return good(cat);
+  };
+  const landed = [];
+  const res = await generateDeck({ key: 'k', model: 'm', settings: {}, backupCards: cards, call, onCategory: (c, list, fresh) => landed.push([c, fresh]) });
+  assert.equal(calls.length, 5);
+  assert.equal(res.draw, undefined);
+  assert.equal(res.act.length >= 6, true);
+  assert.equal(res.act[0].prompt, 'Only one');
+  assert.equal(res.brains.length, 20);
+  assert.deepEqual(landed.find(l => l[0] === 'draw'), ['draw', 0]);
+});
+
+await Promise.all(pending);
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);

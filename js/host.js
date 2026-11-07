@@ -5,6 +5,9 @@ import { sfx } from './sfx.js';
 import { icon } from './icons.js';
 import { dieHtml, tumble, momentHtml, confetti, reduceMotion } from './fx.js';
 import { commentFor } from './commentary.js';
+import { HostNet, makeRoomCode } from './net.js';
+import { generateDeck, GEN_CATEGORIES } from './generate.js';
+import { getKey, setKey, testKey, MODELS, DEFAULT_MODEL } from './llm.js';
 
 // ---------- utilities ----------
 const $ = sel => document.querySelector(sel);
@@ -37,7 +40,7 @@ const defaultPlayers = () => [0, 1, 2].map(k => ({ id: 'p' + (k + 1), name: '', 
 
 const store = {
   screen: 'setup',            // setup | howto | board | winner
-  settings: Object.assign({ lengthMin: 30, sound: true }, lsGet('spielchen.settings', {})),
+  settings: Object.assign({ lengthMin: 30, sound: true, model: DEFAULT_MODEL, cheeky: 50, german: 25 }, lsGet('spielchen.settings', {})),
   settingsOpen: false,
   hotseat: true,
   setup: { players: lsGet('spielchen.players', null) || defaultPlayers(), teamMode: true, teams: null },
@@ -59,7 +62,15 @@ const store = {
   seenGames: new Set(),
   ovKey: null,
   ticker: [],
+  net: null,
+  netStatus: 'offline',
+  room: null,
+  gen: null,                  // { id, cards: {category: [...]}, running, failed: Set }
+  deckGenId: null,
+  prefetching: false,
+  keyMsg: '',
 };
+const phoneMode = () => !!store.net && store.net.connected && !store.hotseat;
 
 sfx.setMuted(!store.settings.sound);
 function saveSettings() { lsSet('spielchen.settings', store.settings); sfx.setMuted(!store.settings.sound); }
@@ -73,7 +84,14 @@ const activeTok = () => R.activeToken(store.game);
 // ---------- rendering ----------
 function render() {
   const app = $('#screen');
-  if (store.screen === 'setup') app.innerHTML = renderSetup();
+  if (store.screen === 'setup') {
+    // Keep typing focus across re-renders (e.g. when the phone connects mid-typing).
+    const f = document.activeElement;
+    const k = f && f.classList && f.classList.contains('name') ? f.dataset.k : null;
+    const pos = k != null ? f.selectionStart : 0;
+    app.innerHTML = renderSetup();
+    if (k != null) { const el = app.querySelector(`.name[data-k="${k}"]`); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch { /* ignore */ } } }
+  }
   else if (store.screen === 'howto') app.innerHTML = renderHowTo();
   else if (store.screen === 'winner') { if (!app.querySelector('.winner')) app.innerHTML = renderWinner(); }
   else if (store.screen === 'board') {
@@ -83,6 +101,7 @@ function render() {
   renderTopbar();
   renderOverlay();
   renderSettings();
+  pushPhone();
 }
 
 function logoHtml(size = '') {
@@ -96,13 +115,45 @@ function renderTopbar() {
   $('#topbar').innerHTML = `
     <div class="tb-left">${onBoard ? logoHtml('small') : ''}</div>
     <div class="tb-right">
-      <span class="pill" title="Fresh cards arrive in Milestone 3">${icon('layers')} Backup deck</span>
-      <span class="pill ${store.hotseat ? 'on' : ''}">${icon('laptop')} Hot-seat <kbd>H</kbd></span>
+      ${freshPill()}
+      ${phonePill()}
       ${onBoard ? `<div class="clock-pill ${lo ? 'lo' : ''}">
         ${lo ? `<span class="lo-tag">Last orders · ${g.lastOrders} turn${g.lastOrders === 1 ? '' : 's'}</span>` : ''}
         <span class="clock" id="clock">${fmtClock()}</span><span class="clock-bar"><i id="clock-fill" style="width:${clockFrac() * 100}%"></i></span></div>` : ''}
       <button class="gear" data-act="settings" aria-label="Settings">${icon('settings')}</button>
     </div>`;
+}
+
+function freshPill() {
+  if (!getKey()) return `<span class="pill" title="Add an API key in Settings for fresh AI cards">${icon('layers')} Backup deck</span>`;
+  const g = store.gen;
+  const n = g ? GEN_CATEGORIES.filter(c => g.cards[c]).length : 0;
+  const busy = g && g.running;
+  return `<span class="pill ${n === 5 ? 'on' : ''}" title="Fresh cards from Claude">${icon('layers')} Fresh cards ${n}/5${busy ? '<i class="spin-dot"></i>' : ''}</span>`;
+}
+
+function phonePill() {
+  if (store.hotseat || !store.net) {
+    return `<span class="pill on">${icon('laptop')} Hot-seat <kbd>H</kbd></span>`;
+  }
+  const st = store.netStatus;
+  const cls = st === 'connected' ? 'ok' : st === 'reconnecting' || st === 'starting' ? 'warn' : 'off';
+  const label = st === 'connected' ? 'Phone connected' : st === 'reconnecting' ? 'Phone reconnecting' : st === 'waiting' ? `Room ${store.room}` : st === 'starting' ? 'Opening room' : 'Phone offline';
+  return `<span class="pill on"><i class="dot ${cls}"></i>${icon('smartphone')} ${label}</span>`;
+}
+
+function phoneUrl() {
+  const u = new URL('phone.html', location.href);
+  u.search = '';
+  u.searchParams.set('room', store.room || '');
+  const peer = new URLSearchParams(location.search).get('peer');
+  if (peer) u.searchParams.set('peer', peer);
+  return u.toString();
+}
+
+function qrSvg(text) {
+  if (typeof window.qrcode !== 'function') return '';
+  try { const q = window.qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 8, margin: 2, scalable: true }); } catch { return ''; }
 }
 
 function clockFrac() {
@@ -152,13 +203,32 @@ function renderSetup() {
       ${teamsHtml}
     </div>
     <div class="setup-right">
-      <div class="join-card">
-        <div class="mini-tiles">${tiles}</div>
-        <div class="join-title">${icon('smartphone')} Phone remote</div>
-        <p>Coming in the next update. For now everything runs on this laptop: <kbd>Space</kbd> <kbd>Y</kbd> <kbd>N</kbd> and <kbd>1</kbd>–<kbd>6</kbd>.</p>
-      </div>
+      ${joinCard(tiles)}
       <button class="btn primary huge" data-act="start">Start ${icon('arrow-right')}</button>
       <p class="muted small">${store.settings.lengthMin === 2 ? '2 min test game' : store.settings.lengthMin + '-minute game'} · <kbd>Enter</kbd> to start</p>
+    </div>
+  </div>`;
+}
+
+function joinCard(tiles) {
+  const st = store.netStatus;
+  if (!store.room || st === 'offline') {
+    return `<div class="join-card">
+      <div class="mini-tiles">${tiles}</div>
+      <div class="join-title">${icon('laptop')} Hot-seat mode</div>
+      <p>The phone remote couldn't start here, so everything runs on this laptop: <kbd>Space</kbd> <kbd>Y</kbd> <kbd>N</kbd> and <kbd>1</kbd>–<kbd>6</kbd>.</p>
+    </div>`;
+  }
+  const qr = qrSvg(phoneUrl());
+  const cls = st === 'connected' ? 'ok' : st === 'waiting' ? 'idle' : 'warn';
+  const label = st === 'connected' ? 'Phone connected' : st === 'waiting' ? 'Scan with one phone' : st === 'reconnecting' ? 'Reconnecting…' : 'Opening room…';
+  return `<div class="join-card qr-card">
+    <div class="qr">${qr || `<div class="qr-fallback">${icon('smartphone')}</div>`}</div>
+    <div class="join-info">
+      <div class="join-label"><i class="dot ${cls}"></i>${label}</div>
+      <div class="room-code">${store.room}</div>
+      <div class="join-url">or open <b>phone.html</b> and type the code</div>
+      <div class="join-hot">No phone? Press <kbd>H</kbd> for hot-seat.</div>
     </div>
   </div>`;
 }
@@ -364,8 +434,12 @@ function cardHtml() {
   let action = '';
   if (ph === 'card-hidden') {
     if (sudden) action = `<div class="look-away">${icon('eye-off')} Sudden death: ${esc(sudden.names)}</div><div class="hint-line">Someone who isn't tied is quizmaster: <kbd>Space</kbd> to peek at the answer (6 s).</div>`;
+    else if (brains && phoneMode()) action = `<div class="look-away">${icon('smartphone')} Pass the phone to ${esc(pname(quizmaster))}</div><div class="hint-line">${esc(pname(quizmaster))} has the answer. Tap Start, then read the question out loud.</div>`;
+    else if (phoneMode()) action = `<div class="look-away">${icon('smartphone')} ${name}, check the phone</div><div class="hint-line">Hold to peek at the card, then tap Start.</div>`;
     else if (brains) action = `<div class="look-away">${icon('eye-off')} Everyone except ${esc(pname(quizmaster))}, look away</div><div class="hint-line">${esc(pname(quizmaster))} is quizmaster: <kbd>Space</kbd> to peek at the answer (6 s).</div>`;
     else action = `<div class="look-away">${icon('eye-off')} Everyone except ${name}, look away</div><div class="hint-line">${name}: <kbd>Space</kbd> to peek at the card (6 s).</div>`;
+  } else if (ph === 'card-ready' && phoneMode()) {
+    action = `<div class="hint-line">Tap Start on the phone when ready</div>`;
   } else if (ph === 'card-ready') {
     action = `<div class="hint-line"><kbd>Space</kbd> start the ${mg.seconds} s timer${brains ? ' and read the question out' : ''} · <kbd>P</kbd> peek again</div>`;
   } else if (ph === 'running' || ph === 'timeup') {
@@ -487,15 +561,169 @@ function renderSettings() {
   const el = $('#settings');
   if (!store.settingsOpen) { el.className = ''; el.innerHTML = ''; return; }
   const s = store.settings;
+  const hasKey = !!getKey();
   el.className = 'show';
   el.innerHTML = `<div class="settings-card">
     <h2>Settings</h2>
+    <label class="field col"><span>Anthropic API key <span class="muted small">(stays in this browser only)</span></span>
+      <span class="key-row"><input id="set-key" type="password" autocomplete="off" spellcheck="false" placeholder="${hasKey ? 'Saved. Paste a new key to replace it' : 'sk-ant-…'}">
+      <button class="btn ghost small-btn" data-act="test-key">Test key</button>${hasKey ? `<button class="btn ghost small-btn" data-act="forget-key">Forget</button>` : ''}</span>
+      <span class="key-msg" id="key-msg">${esc(store.keyMsg)}</span></label>
+    <label class="field"><span>Model</span>
+      <select id="set-model">${MODELS.map(m => `<option value="${m.id}" ${s.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}</select></label>
     <label class="field"><span>Game length</span>
       <select id="set-length">${[20, 30, 40, 2].map(m => `<option value="${m}" ${s.lengthMin === m ? 'selected' : ''}>${m === 2 ? '2 min (test)' : m + ' min'}</option>`).join('')}</select></label>
+    <label class="field"><span>Clean ↔ cheeky</span><input type="range" id="set-cheeky" min="0" max="100" step="10" value="${s.cheeky}"></label>
+    <label class="field"><span>German flavour <b id="german-val">${s.german}%</b></span><input type="range" id="set-german" min="0" max="50" step="5" value="${s.german}"></label>
     <label class="toggle"><input type="checkbox" id="set-sound" ${s.sound ? 'checked' : ''}><span class="sw"></span> Sound <kbd>M</kbd></label>
-    <p class="muted small">API key, model, cheekiness and German-flavour sliders arrive with fresh decks.</p>
-    <div class="win-actions"><button class="btn primary" data-act="save-settings">Save</button></div>
+    <div class="win-actions"><button class="btn ghost" data-act="close-settings">Cancel</button><button class="btn primary" data-act="save-settings">Save</button></div>
   </div>`;
+}
+
+// ---------- fresh decks ----------
+const genSettings = () => ({ germanPct: store.settings.german, cleanPct: 100 - Math.round(store.settings.cheeky * 0.6) });
+
+/** Generate a deck in the background. target 'current' feeds the live game; 'next' is saved for Rematch. */
+async function runGeneration(target = 'current') {
+  const key = getKey();
+  if (!key || !store.backupCards.length) return;
+  if (target === 'current' && store.gen && store.gen.running) return;
+  const gen = { id: Date.now() + Math.random(), cards: {}, running: true };
+  if (target === 'current') store.gen = gen;
+  else store.prefetching = true;
+  renderTopbar();
+  await generateDeck({
+    key, model: store.settings.model, settings: genSettings(),
+    seenList: lsGet('spielchen.seen', []), backupCards: store.backupCards,
+    onCategory: (cat, cards) => {
+      if (!cards) return;
+      gen.cards[cat] = cards;
+      if (target === 'current' && store.deck && store.deckGenId === gen.id) store.deck.setCategory(cat, cards);
+      if (target === 'current') renderTopbar();
+    },
+  });
+  gen.running = false;
+  if (target === 'next') {
+    store.prefetching = false;
+    if (Object.keys(gen.cards).length) lsSet('spielchen.nextDeck', { cards: gen.cards, savedAt: Date.now() });
+  }
+  renderTopbar();
+}
+
+/** Pick the cards for a new game: a prefetched deck if there is one, else whatever is ready (backup for the rest). */
+function deckForNewGame() {
+  const next = lsGet('spielchen.nextDeck', null);
+  if (next && next.cards && Object.keys(next.cards).length) {
+    try { localStorage.removeItem('spielchen.nextDeck'); } catch { /* ignore */ }
+    store.gen = { id: Date.now() + Math.random(), cards: next.cards, running: false };
+  } else if (!store.gen || store.gen.used) {
+    store.gen = null;
+    runGeneration('current');   // never blocks: categories swap in as they land
+  }
+  const gen = store.gen;
+  if (gen) gen.used = true;
+  store.deckGenId = gen ? gen.id : null;
+  const cards = [];
+  for (const cat of GEN_CATEGORIES) {
+    const fresh = gen && gen.cards[cat];
+    cards.push(...(fresh || store.backupCards.filter(c => c.category === cat)));
+  }
+  return cards;
+}
+
+// ---------- phone protocol ----------
+const pub = p => p ? { id: p.id, name: p.name, color: p.color, emoji: p.emoji } : null;
+
+function phoneState(role) {
+  const g = store.game;
+  const players = (g ? g.players : store.setup.players.map((p, k) => ({ ...p, name: (p.name || '').trim() || `Player ${k + 1}` }))).map(pub);
+  const base = { t: 'state', role, screen: store.screen, phase: store.phase, players, view: 'lobby' };
+  if (store.screen === 'winner' && store.result) {
+    return { ...base, view: role === 'controller' ? 'winner' : 'spectator', winner: store.result.ranking[0].name, positions: store.result.ranking.map(t => ({ name: t.name, emoji: t.emoji, color: t.color, pos: t.pos })) };
+  }
+  if (!g || store.screen !== 'board') return base;
+  const active = P(activePid());
+  base.active = pub(active);
+  base.positions = g.tokens.map((t, k) => ({ name: t.name, emoji: t.emoji, color: t.color, pos: t.pos, active: k === g.turnIdx }));
+  if (role !== 'controller') return { ...base, view: 'spectator' };
+  const ph = store.phase;
+  const ctx = store.ctx || {};
+  const turnKey = g.turnCount;
+  const timerLeftMs = store.timer ? Math.max(0, store.timer.endsAt - Date.now()) : null;
+  const cardInfo = card => {
+    const mg = MINI_GAMES[card.game];
+    return { ...card, gameName: mg.name, seconds: mg.seconds, tv: mg.tv(pname(activePid()), card), verb: R.CATEGORY_INFO[card.category].verb, quizmaster: ctx.quizmaster || null, sudden: !!ctx.sudden };
+  };
+  const holderFor = () => ctx.sudden ? null : (ctx.card && ctx.card.category === 'brains' ? pub(P(ctx.quizmaster)) : pub(active));
+  const chips = pids => pids.map(pid => pub(P(pid)));
+  switch (ph) {
+    case 'pass': return { ...base, view: 'roll', holder: pub(active), holderKey: `${turnKey}:${active.id}`, finaleNext: R.needsFinaleWithoutRoll(g) };
+    case 'pick': return { ...base, view: 'pick', finale: !!ctx.finale, holder: ctx.finale ? null : pub(active), holderKey: `${turnKey}:${active.id}` };
+    case 'card-hidden': case 'card-ready': case 'reveal': {
+      const h = holderFor();
+      return { ...base, view: 'card', card: cardInfo(ctx.card), holder: h, holderKey: `${turnKey}:${h ? h.id : 'any'}` };
+    }
+    case 'running': case 'timeup': {
+      const h = holderFor();
+      return { ...base, view: 'running', card: cardInfo(ctx.card), holder: h, holderKey: `${turnKey}:${h ? h.id : 'any'}`, timerLeftMs, timeUp: ph === 'timeup' };
+    }
+    case 'guesser': {
+      const pids = ctx.sudden ? ctx.sudden.pids : R.otherPlayers(g).map(p => p.id);
+      return { ...base, view: 'chips', title: ctx.sudden ? 'Who shouted it first?' : 'Who guessed it first?', choices: chips(pids), nobody: false, back: true };
+    }
+    case 'steal': return { ...base, view: 'chips', title: 'Did someone steal it?', choices: chips(stealOptions()), nobody: true, back: true };
+    case 'ap-ready': return { ...base, view: 'button', title: MINI_GAMES[ctx.card.game].name, text: ctx.card.prompt, label: ctx.sr ? 'First question' : 'Start the timer' };
+    case 'ap-running': return { ...base, view: 'button', title: MINI_GAMES[ctx.card.game].name, text: ctx.card.prompt, label: 'Stop early', timerLeftMs };
+    case 'ap-q': return { ...base, view: 'button', title: `Question ${ctx.sr.i + 1} of 3`, text: ctx.card.questions[ctx.sr.i].q, answer: ctx.card.questions[ctx.sr.i].a, label: 'Reveal the answer' };
+    case 'ap-a': return { ...base, view: 'chips', title: 'Who shouted it first?', choices: chips(g.players.map(p => p.id)), nobody: true };
+    case 'ap-pick': return { ...base, view: 'chips', title: ctx.card.game === 'estimateoff' ? `Who was closest? (${ctx.card.answer})` : 'Who drew the best one?', choices: chips(g.players.map(p => p.id)), nobody: true };
+    default: return { ...base, view: 'watch' };
+  }
+}
+
+function pushPhone() { if (store.net) store.net.broadcast(phoneState); }
+
+/** Messages from the controller phone. */
+function handleAction(msg) {
+  const ph = store.phase;
+  if (msg.t === 'rematch' && store.screen === 'winner') return startGame({ rematch: true });
+  if (msg.t === 'newgame' && store.screen === 'winner') return newGame();
+  if (msg.t === 'startgame' && store.screen === 'setup') return startGame();
+  if (msg.t === 'skip' && store.screen === 'howto') return leaveHowTo();
+  if (store.screen !== 'board' || store.busy) return;
+  switch (msg.t) {
+    case 'roll': if (ph === 'pass') doRoll(); break;
+    case 'start':
+      if (ph === 'card-hidden' || ph === 'card-ready') startRound();
+      else if (ph === 'reveal') { hideReveal(); startRound(); }
+      else if (ph === 'ap-ready' || ph === 'ap-running' || ph === 'ap-q') handleKey({ key: ' ', target: {}, preventDefault() {} });
+      break;
+    case 'result': if (ph === 'running' || ph === 'timeup') { if (msg.ok) onGotIt(); else onFailed(); } break;
+    case 'player':
+      if (['guesser', 'steal', 'ap-pick', 'ap-a'].includes(ph)) { if (msg.pid || ph !== 'guesser') pickPlayer(msg.pid || ''); }
+      break;
+    case 'back': if (ph === 'guesser' || ph === 'steal') setPhase('timeup'); break;
+    case 'pick': if (ph === 'pick' && R.CATEGORIES.includes(msg.category)) pickCategory(msg.category); break;
+    case 'undo': if (ph === 'pass') undo(); else if (ph === 'guesser' || ph === 'steal') setPhase('timeup'); break;
+  }
+}
+
+function startNet() {
+  store.net = new HostNet({
+    onAction: handleAction,
+    onStatus: st => {
+      store.netStatus = st;
+      store.room = store.net.code;
+      if (store.screen === 'setup') render(); else renderTopbar();
+    },
+    onController: on => {
+      if (on && store.hotseat) { store.hotseat = false; render(); }
+      pushPhone();
+    },
+  });
+  const ok = store.net.start(makeRoomCode());
+  store.room = store.net.code;
+  if (!ok) store.net = null;
 }
 
 // ---------- ticker (results + commentary) ----------
@@ -565,6 +793,7 @@ function clockTick() {
   const fill = $('#clock-fill');
   if (fill) fill.style.width = `${clockFrac() * 100}%`;
   const elapsed = Date.now() - store.clock.startedAt;
+  if (!store.prefetched && elapsed >= store.prefetchAt && getKey()) { store.prefetched = true; runGeneration('next'); }
   if (elapsed >= store.clock.lastOrdersAt && store.game.lastOrders == null) {
     store.game = R.callLastOrders(store.game, store.phase !== 'pass');
     showLastOrders();
@@ -636,8 +865,11 @@ function startGame({ rematch = false } = {}) {
   const teamMode = R.teamsAllowed(ps.length) && store.setup.teamMode;
   if (teamMode && !validTeams(store.setup.teams, ps)) store.setup.teams = R.makeTeams(ps.map(p => p.id));
   saveSeen();
+  const lengthMs = store.settings.lengthMin * 60000;
   store.game = R.createGame({ players: ps, teams: teamMode ? store.setup.teams : null });
-  store.deck = new Deck(store.backupCards, Math.random, lsGet('spielchen.seen', []));
+  store.deck = new Deck(deckForNewGame(), Math.random, lsGet('spielchen.seen', []));
+  store.prefetchAt = Math.min(10 * 60000, Math.round(lengthMs / 2));
+  store.prefetched = false;
   store.displayPos = {};
   store.undo = [];
   store.timeUp = false;
@@ -645,7 +877,6 @@ function startGame({ rematch = false } = {}) {
   store.result = null;
   store.seenGames = new Set();
   store.ticker = [];
-  const lengthMs = store.settings.lengthMin * 60000;
   store.clock = { startedAt: Date.now(), lengthMs, lastOrdersAt: R.lastOrdersAtMs(lengthMs) };
   sfx.unlock();
   $('#screen').innerHTML = '';
@@ -972,13 +1203,15 @@ function handleKey(e) {
 
   if (store.screen === 'setup') {
     if (k === 'Enter') { e.preventDefault(); startGame(); }
+    else if (!inInput && k === 'h') { store.hotseat = !store.hotseat; render(); }
+    else if (!inInput && k === 'f') toggleFullscreen();
     return;
   }
   if (inInput) return;
 
   if (k === 'f') { toggleFullscreen(); return; }
   if (k === 'm') { store.settings.sound = !store.settings.sound; saveSettings(); say(store.settings.sound ? 'Sound on' : 'Muted'); return; }
-  if (k === 'h') { store.hotseat = !store.hotseat; say(store.hotseat ? 'Hot-seat mode on' : 'The phone remote arrives in the next update, so keys still work'); renderTopbar(); return; }
+  if (k === 'h') { store.hotseat = !store.hotseat; say(store.hotseat ? 'Hot-seat mode: cards show on the TV' : (store.net && store.net.connected ? 'Phone mode: cards show on the phone' : 'No phone connected yet: scan the QR code')); render(); return; }
 
   if (store.screen === 'howto') { if (k === ' ' || k === 'Enter') { e.preventDefault(); leaveHowTo(); } return; }
   if (store.screen === 'winner') {
@@ -1005,9 +1238,9 @@ function handleKey(e) {
   switch (ph) {
     case 'pass': if (k === ' ') doRoll(); break;
     case 'pick': if (/^[1-4]$/.test(k)) pickCategory(R.CATEGORIES[+k - 1]); break;
-    case 'card-hidden': if (k === ' ') reveal(); break;
+    case 'card-hidden': if (k === ' ') { if (phoneMode()) startRound(); else reveal(); } break;
     case 'reveal': if (k === ' ') hideReveal(); break;
-    case 'card-ready': if (k === ' ') startRound(); else if (k === 'p') reveal(); break;
+    case 'card-ready': if (k === ' ') startRound(); else if (k === 'p' && !phoneMode()) reveal(); break;
     case 'running': case 'timeup': if (k === 'y') onGotIt(); else if (k === 'n') onFailed(); break;
     case 'guesser': case 'steal': case 'ap-pick': case 'ap-a':
       if (/^[0-6]$/.test(k)) {
@@ -1053,13 +1286,32 @@ function handleClick(e) {
   const ps = store.setup.players;
   switch (act) {
     case 'settings': store.settingsOpen = !store.settingsOpen; render(); break;
-    case 'save-settings':
+    case 'save-settings': {
+      const newKey = $('#set-key').value.trim();
+      const hadKey = !!getKey();
+      if (newKey) setKey(newKey);
       store.settings.lengthMin = +$('#set-length').value;
       store.settings.sound = $('#set-sound').checked;
+      store.settings.model = $('#set-model').value;
+      store.settings.cheeky = +$('#set-cheeky').value;
+      store.settings.german = +$('#set-german').value;
       saveSettings();
       store.settingsOpen = false;
+      store.keyMsg = '';
       render();
+      if (newKey && (!hadKey || !store.gen) && store.screen === 'setup') runGeneration('current');
       break;
+    }
+    case 'close-settings': store.settingsOpen = false; store.keyMsg = ''; render(); break;
+    case 'forget-key': setKey(''); store.keyMsg = 'Key removed from this browser.'; store.gen = null; render(); break;
+    case 'test-key': {
+      const k = $('#set-key').value.trim() || getKey();
+      const msgEl = $('#key-msg');
+      if (!k) { msgEl.textContent = 'Paste a key first.'; break; }
+      msgEl.textContent = 'Testing…';
+      testKey(k, $('#set-model').value).then(r => { store.keyMsg = (r.ok ? '✓ ' : '✗ ') + r.message; const el = $('#key-msg'); if (el) { el.textContent = store.keyMsg; el.className = 'key-msg ' + (r.ok ? 'ok' : 'bad'); } });
+      break;
+    }
     case 'color': {
       const used = ps.map(p => p.color);
       let idx = TOKEN_COLORS.indexOf(ps[k].color);
@@ -1118,13 +1370,18 @@ async function boot() {
   document.addEventListener('keydown', handleKey);
   document.addEventListener('click', handleClick);
   document.addEventListener('input', handleInput);
+  document.addEventListener('input', e => { if (e.target.id === 'set-german') { const v = $('#german-val'); if (v) v.textContent = e.target.value + '%'; } });
   try {
     store.backupCards = await loadBackupDeck();
   } catch (err) {
     console.error('Could not load backup deck', err);
   }
+  startNet();
+  const next = lsGet('spielchen.nextDeck', null);
+  if (!(next && next.cards) && getKey()) runGeneration('current');   // start early: usually ready before names are typed
   render();
   setInterval(clockTick, 250);
+  setInterval(pushPhone, 2000);   // heartbeat + timer sync
   requestAnimationFrame(frame);
   // Exposed for tests and debugging (never contains the API key).
   window.__spielchen = { store, R, render };

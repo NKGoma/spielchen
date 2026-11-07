@@ -408,3 +408,29 @@ button.tile:hover { transform: translateY(-6px); }
   .train-run { display: none; }
 }
 @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+
+/* ---------- phone link, fresh cards, settings (milestones 2–3) ---------- */
+.dot { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.ok { background: var(--brains); box-shadow: 0 0 0 4px rgba(46,209,154,.25); }
+.dot.warn { background: #FFB020; animation: pulse 1.2s infinite; }
+.dot.idle { background: var(--text); animation: pulse 1.6s infinite; }
+.dot.off { background: var(--alert); }
+.spin-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; background: var(--words); margin-left: 4px; animation: pulse 0.9s infinite; }
+.qr-card { display: flex; gap: 32px; align-items: center; text-align: left; }
+.qr { width: 240px; height: 240px; flex: none; background: #fff; border-radius: 20px; padding: 10px; }
+.qr svg { width: 100%; height: 100%; display: block; }
+.qr-fallback { width: 100%; height: 100%; display: grid; place-items: center; color: var(--bg); font-size: 120px; }
+.join-info { display: flex; flex-direction: column; gap: 8px; }
+.join-label { display: flex; gap: 12px; align-items: center; font-size: 26px; font-weight: 600; }
+.room-code { font-family: var(--font-display); font-weight: 800; font-size: 84px; letter-spacing: 0.04em; line-height: 1; }
+.join-url { font-size: 22px; color: var(--muted); }
+.join-hot { font-size: 20px; color: var(--muted); }
+.field.col { flex-direction: column; align-items: stretch; gap: 10px; }
+.key-row { display: flex; gap: 12px; }
+.key-row input { flex: 1; background: var(--bg); border: 2px solid var(--line); border-radius: 14px; padding: 12px 18px; font-size: 26px; outline: none; }
+.key-row input:focus { border-color: var(--text); }
+.key-msg { font-size: 22px; color: var(--muted); min-height: 28px; }
+.key-msg.ok { color: var(--brains); } .key-msg.bad { color: var(--alert); }
+.settings-card { width: 960px; gap: 22px; }
+.settings-card input[type=range] { width: 360px; accent-color: var(--words); }
+.settings-card .win-actions { justify-content: flex-end; margin-top: 8px; }

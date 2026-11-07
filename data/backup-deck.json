@@ -904,65 +904,41 @@
  {
   "id": "allplay-01",
   "category": "allplay",
-  "game": "drawoff",
-  "prompt": "A German breakfast",
-  "difficulty": "easy",
+  "game": "estimateoff",
+  "prompt": "How many countries are there in Africa?",
+  "answer": "54",
+  "tolerance": 4,
+  "difficulty": "medium",
   "tone": "clean",
-  "german": true,
-  "hint_en": "Think Brötchen, cheese, cold cuts, jam and a boiled egg."
+  "german": false,
+  "hint_en": null
  },
  {
   "id": "allplay-02",
   "category": "allplay",
-  "game": "drawoff",
-  "prompt": "Your dream holiday",
-  "difficulty": "easy",
-  "tone": "clean",
-  "german": false,
-  "hint_en": null
- },
- {
-  "id": "allplay-03",
-  "category": "allplay",
-  "game": "drawoff",
-  "prompt": "The world’s worst superhero",
-  "difficulty": "medium",
-  "tone": "cheeky",
-  "german": false,
-  "hint_en": null
- },
- {
-  "id": "allplay-04",
-  "category": "allplay",
-  "game": "drawoff",
-  "prompt": "A dog walking its owner",
-  "difficulty": "medium",
-  "tone": "cheeky",
-  "german": false,
-  "hint_en": null
- },
- {
-  "id": "allplay-05",
-  "category": "allplay",
-  "game": "drawoff",
-  "prompt": "The bouncer at a Berlin techno club",
-  "difficulty": "medium",
-  "tone": "cheeky",
-  "german": true,
-  "hint_en": "Berlin clubs like Berghain are famous for strict, mysterious door policies."
- },
- {
-  "id": "allplay-06",
-  "category": "allplay",
-  "game": "drawoff",
-  "prompt": "Monday morning",
+  "game": "estimateoff",
+  "prompt": "In what year was the first Eurovision Song Contest held?",
+  "answer": "1956",
+  "tolerance": 3,
   "difficulty": "hard",
   "tone": "cheeky",
   "german": false,
   "hint_en": null
  },
  {
-  "id": "allplay-07",
+  "id": "allplay-03",
+  "category": "allplay",
+  "game": "estimateoff",
+  "prompt": "In what year did the Beatles release their first single, “Love Me Do”?",
+  "answer": "1962",
+  "tolerance": 3,
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-04",
   "category": "allplay",
   "game": "estimateoff",
   "prompt": "In what year did the first iPhone come out?",
@@ -974,7 +950,7 @@
   "hint_en": null
  },
  {
-  "id": "allplay-08",
+  "id": "allplay-05",
   "category": "allplay",
   "game": "estimateoff",
   "prompt": "How many people live on Earth, in billions?",
@@ -986,7 +962,7 @@
   "hint_en": null
  },
  {
-  "id": "allplay-09",
+  "id": "allplay-06",
   "category": "allplay",
   "game": "estimateoff",
   "prompt": "How many episodes of “Friends” were made?",
@@ -998,7 +974,7 @@
   "hint_en": null
  },
  {
-  "id": "allplay-10",
+  "id": "allplay-07",
   "category": "allplay",
   "game": "estimateoff",
   "prompt": "In what year did euro coins and notes go into circulation?",
@@ -1010,7 +986,7 @@
   "hint_en": null
  },
  {
-  "id": "allplay-11",
+  "id": "allplay-08",
   "category": "allplay",
   "game": "estimateoff",
   "prompt": "How tall is Cologne Cathedral, in metres?",
@@ -1020,6 +996,78 @@
   "tone": "clean",
   "german": true,
   "hint_en": "The Kölner Dom, the huge Gothic cathedral next to Cologne station."
+ },
+ {
+  "id": "allplay-09",
+  "category": "allplay",
+  "game": "speedround",
+  "prompt": "Football",
+  "questions": [
+   {
+    "q": "Which country won the 2014 World Cup?",
+    "a": "Germany"
+   },
+   {
+    "q": "How many players per team are on the pitch?",
+    "a": "11"
+   },
+   {
+    "q": "Which country hosted the 2018 World Cup?",
+    "a": "Russia"
+   }
+  ],
+  "difficulty": "easy",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-10",
+  "category": "allplay",
+  "game": "speedround",
+  "prompt": "Planets",
+  "questions": [
+   {
+    "q": "Largest planet in the solar system?",
+    "a": "Jupiter"
+   },
+   {
+    "q": "Closest planet to the Sun?",
+    "a": "Mercury"
+   },
+   {
+    "q": "Which planet is famous for its rings?",
+    "a": "Saturn"
+   }
+  ],
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-11",
+  "category": "allplay",
+  "game": "speedround",
+  "prompt": "Around Europe",
+  "questions": [
+   {
+    "q": "Capital of Austria?",
+    "a": "Vienna"
+   },
+   {
+    "q": "Which country is shaped like a boot?",
+    "a": "Italy"
+   },
+   {
+    "q": "What is the currency of Switzerland?",
+    "a": "The Swiss franc"
+   }
+  ],
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
  },
  {
   "id": "allplay-12",

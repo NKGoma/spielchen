@@ -1,0 +1,1144 @@
+[
+ {
+  "id": "act-01",
+  "category": "act",
+  "game": "charades",
+  "prompt": "Titanic",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-02",
+  "category": "act",
+  "game": "charades",
+  "prompt": "The Lion King",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-03",
+  "category": "act",
+  "game": "charades",
+  "prompt": "Squid Game",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-04",
+  "category": "act",
+  "game": "charades",
+  "prompt": "Game of Thrones",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-05",
+  "category": "act",
+  "game": "charades",
+  "prompt": "Run Lola Run (Lola rennt)",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "A 1999 German film where Lola sprints through Berlin to save her boyfriend."
+ },
+ {
+  "id": "act-06",
+  "category": "act",
+  "game": "hum",
+  "prompt": "99 Luftballons",
+  "answer": "Nena",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "A 1983 German pop hit about 99 red balloons."
+ },
+ {
+  "id": "act-07",
+  "category": "act",
+  "game": "hum",
+  "prompt": "Dancing Queen",
+  "answer": "ABBA",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-08",
+  "category": "act",
+  "game": "hum",
+  "prompt": "Seven Nation Army",
+  "answer": "The White Stripes",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-09",
+  "category": "act",
+  "game": "hum",
+  "prompt": "Bohemian Rhapsody",
+  "answer": "Queen",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-10",
+  "category": "act",
+  "game": "hum",
+  "prompt": "Atemlos durch die Nacht",
+  "answer": "Helene Fischer",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": true,
+  "hint_en": "A 2013 Schlager anthem, a fixture at every German wedding and office party."
+ },
+ {
+  "id": "act-11",
+  "category": "act",
+  "game": "scene",
+  "prompt": "Your neighbour catches you putting glass in the bin at 21:00 on a Sunday",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": true,
+  "hint_en": "In Germany, glass recycling bins have quiet hours, and Sunday is a rest day."
+ },
+ {
+  "id": "act-12",
+  "category": "act",
+  "game": "scene",
+  "prompt": "Assembling flat-pack furniture and finding one screw left over",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-13",
+  "category": "act",
+  "game": "scene",
+  "prompt": "Feeding 40 bottles into a Pfand machine that keeps rejecting one",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Pfand is the deposit on bottles; supermarket machines give it back as a receipt."
+ },
+ {
+  "id": "act-14",
+  "category": "act",
+  "game": "scene",
+  "prompt": "Your camera switches on in a video call while you are still in bed",
+  "difficulty": "easy",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-15",
+  "category": "act",
+  "game": "scene",
+  "prompt": "Trying to get a waiter’s attention in a busy restaurant",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-16",
+  "category": "act",
+  "game": "statue",
+  "prompt": "Usain Bolt’s lightning bolt pose",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-17",
+  "category": "act",
+  "game": "statue",
+  "prompt": "The Merkel rhombus",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Angela Merkel’s famous hand gesture: fingertips together in a diamond shape."
+ },
+ {
+  "id": "act-18",
+  "category": "act",
+  "game": "statue",
+  "prompt": "Rodin’s The Thinker",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-19",
+  "category": "act",
+  "game": "statue",
+  "prompt": "The Statue of Liberty",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "act-20",
+  "category": "act",
+  "game": "statue",
+  "prompt": "The “I’m flying” scene at the bow of the Titanic",
+  "difficulty": "hard",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-01",
+  "category": "draw",
+  "game": "pictionary",
+  "prompt": "Oktoberfest",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Munich’s huge beer festival, with tents, Lederhosen and Dirndl."
+ },
+ {
+  "id": "draw-02",
+  "category": "draw",
+  "game": "pictionary",
+  "prompt": "A selfie stick",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-03",
+  "category": "draw",
+  "game": "pictionary",
+  "prompt": "The Autobahn",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Germany’s motorway network, famous for stretches with no speed limit."
+ },
+ {
+  "id": "draw-04",
+  "category": "draw",
+  "game": "pictionary",
+  "prompt": "Brexit",
+  "difficulty": "hard",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-05",
+  "category": "draw",
+  "game": "pictionary",
+  "prompt": "Inflation",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-06",
+  "category": "draw",
+  "game": "blind",
+  "prompt": "The Eiffel Tower",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-07",
+  "category": "draw",
+  "game": "blind",
+  "prompt": "A cat",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-08",
+  "category": "draw",
+  "game": "blind",
+  "prompt": "The Mona Lisa",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-09",
+  "category": "draw",
+  "game": "blind",
+  "prompt": "A hot air balloon",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-10",
+  "category": "draw",
+  "game": "blind",
+  "prompt": "A Deutsche Bahn delay",
+  "difficulty": "hard",
+  "tone": "cheeky",
+  "german": true,
+  "hint_en": "Deutsche Bahn is the national rail company, famous for delays."
+ },
+ {
+  "id": "draw-11",
+  "category": "draw",
+  "game": "oneline",
+  "prompt": "A coffee cup",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-12",
+  "category": "draw",
+  "game": "oneline",
+  "prompt": "A snail",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-13",
+  "category": "draw",
+  "game": "oneline",
+  "prompt": "A bicycle",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-14",
+  "category": "draw",
+  "game": "oneline",
+  "prompt": "A guitar",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-15",
+  "category": "draw",
+  "game": "oneline",
+  "prompt": "Neuschwanstein Castle",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "The fairy-tale castle in Bavaria that inspired Disney."
+ },
+ {
+  "id": "draw-16",
+  "category": "draw",
+  "game": "wronghand",
+  "prompt": "A pizza",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-17",
+  "category": "draw",
+  "game": "wronghand",
+  "prompt": "A Currywurst",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Sliced sausage with curry ketchup, a Berlin street-food classic."
+ },
+ {
+  "id": "draw-18",
+  "category": "draw",
+  "game": "wronghand",
+  "prompt": "A unicorn",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-19",
+  "category": "draw",
+  "game": "wronghand",
+  "prompt": "A sloth on holiday",
+  "difficulty": "easy",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "draw-20",
+  "category": "draw",
+  "game": "wronghand",
+  "prompt": "Your boss singing karaoke",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-01",
+  "category": "words",
+  "game": "taboo",
+  "prompt": "Eurovision",
+  "forbidden": [
+   "song",
+   "contest",
+   "vote",
+   "ABBA"
+  ],
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-02",
+  "category": "words",
+  "game": "taboo",
+  "prompt": "Pizza",
+  "forbidden": [
+   "Italy",
+   "cheese",
+   "slice",
+   "dough"
+  ],
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-03",
+  "category": "words",
+  "game": "taboo",
+  "prompt": "Netflix",
+  "forbidden": [
+   "stream",
+   "series",
+   "binge",
+   "subscription"
+  ],
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-04",
+  "category": "words",
+  "game": "taboo",
+  "prompt": "Bundestag",
+  "forbidden": [
+   "parliament",
+   "Berlin",
+   "vote",
+   "government"
+  ],
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "The German federal parliament, which sits in the Reichstag building in Berlin."
+ },
+ {
+  "id": "words-05",
+  "category": "words",
+  "game": "taboo",
+  "prompt": "Jet lag",
+  "forbidden": [
+   "time",
+   "zone",
+   "flight",
+   "tired"
+  ],
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-06",
+  "category": "words",
+  "game": "threewords",
+  "prompt": "James Bond",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-07",
+  "category": "words",
+  "game": "threewords",
+  "prompt": "Ryanair",
+  "difficulty": "easy",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-08",
+  "category": "words",
+  "game": "threewords",
+  "prompt": "Schengen",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-09",
+  "category": "words",
+  "game": "threewords",
+  "prompt": "Feierabend",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "The moment the working day ends — and the evening begins."
+ },
+ {
+  "id": "words-10",
+  "category": "words",
+  "game": "threewords",
+  "prompt": "Black Friday",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-11",
+  "category": "words",
+  "game": "accent",
+  "prompt": "Global warming",
+  "accent": "Pirate",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-12",
+  "category": "words",
+  "game": "accent",
+  "prompt": "Tinder",
+  "accent": "Dramatic Shakespearean actor",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-13",
+  "category": "words",
+  "game": "accent",
+  "prompt": "Brexit",
+  "accent": "Posh British",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-14",
+  "category": "words",
+  "game": "accent",
+  "prompt": "A Späti",
+  "accent": "Bavarian",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "A Späti is a late-night corner shop, a Berlin institution."
+ },
+ {
+  "id": "words-15",
+  "category": "words",
+  "game": "accent",
+  "prompt": "Kafka",
+  "accent": "Swiss German",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-16",
+  "category": "words",
+  "game": "rhyme",
+  "prompt": "Cat",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-17",
+  "category": "words",
+  "game": "rhyme",
+  "prompt": "Moon",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-18",
+  "category": "words",
+  "game": "rhyme",
+  "prompt": "Prosecco",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-19",
+  "category": "words",
+  "game": "rhyme",
+  "prompt": "Fondue",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "words-20",
+  "category": "words",
+  "game": "rhyme",
+  "prompt": "Lederhosen",
+  "difficulty": "hard",
+  "tone": "cheeky",
+  "german": true,
+  "hint_en": "Traditional Bavarian leather shorts, worn at Oktoberfest."
+ },
+ {
+  "id": "brains-01",
+  "category": "brains",
+  "game": "quiz",
+  "prompt": "Which band won Eurovision 1974 with “Waterloo”?",
+  "answer": "ABBA",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-02",
+  "category": "brains",
+  "game": "quiz",
+  "prompt": "In which city is the Brandenburg Gate?",
+  "answer": "Berlin",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "The Brandenburger Tor, Germany’s most famous landmark."
+ },
+ {
+  "id": "brains-03",
+  "category": "brains",
+  "game": "quiz",
+  "prompt": "Which planet is known as the Red Planet?",
+  "answer": "Mars",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-04",
+  "category": "brains",
+  "game": "quiz",
+  "prompt": "In which city did Oktoberfest begin?",
+  "answer": "Munich",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Oktoberfest is the big beer festival held every autumn."
+ },
+ {
+  "id": "brains-05",
+  "category": "brains",
+  "game": "quiz",
+  "prompt": "Who directed “Pulp Fiction”?",
+  "answer": "Quentin Tarantino",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-06",
+  "category": "brains",
+  "game": "quiz",
+  "prompt": "What is the capital of Australia?",
+  "answer": "Canberra",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-07",
+  "category": "brains",
+  "game": "quiz",
+  "prompt": "Which English king had six wives?",
+  "answer": "Henry VIII",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-08",
+  "category": "brains",
+  "game": "quiz",
+  "prompt": "Which composer wrote the music used for the EU anthem, “Ode to Joy”?",
+  "answer": "Beethoven",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-09",
+  "category": "brains",
+  "game": "oddoneout",
+  "prompt": "Which of these isn’t in the EU?",
+  "options": [
+   "Malta",
+   "Cyprus",
+   "Iceland",
+   "Ireland"
+  ],
+  "answer": "Iceland",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-10",
+  "category": "brains",
+  "game": "oddoneout",
+  "prompt": "Which of these was never a Beatle?",
+  "options": [
+   "John Lennon",
+   "Paul McCartney",
+   "Ringo Starr",
+   "Mick Jagger"
+  ],
+  "answer": "Mick Jagger",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-11",
+  "category": "brains",
+  "game": "oddoneout",
+  "prompt": "Which of these isn’t a German state?",
+  "options": [
+   "Bavaria",
+   "Saxony",
+   "Tyrol",
+   "Hesse"
+  ],
+  "answer": "Tyrol",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Germany has 16 states (Bundesländer); Tyrol is in Austria."
+ },
+ {
+  "id": "brains-12",
+  "category": "brains",
+  "game": "oddoneout",
+  "prompt": "Which of these isn’t a Hogwarts house?",
+  "options": [
+   "Gryffindor",
+   "Hufflepuff",
+   "Slytherin",
+   "Durmstrang"
+  ],
+  "answer": "Durmstrang",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-13",
+  "category": "brains",
+  "game": "oddoneout",
+  "prompt": "Which of these cities isn’t in Spain?",
+  "options": [
+   "Seville",
+   "Valencia",
+   "Porto",
+   "Bilbao"
+  ],
+  "answer": "Porto",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-14",
+  "category": "brains",
+  "game": "oddoneout",
+  "prompt": "Which of these was never German chancellor?",
+  "options": [
+   "Helmut Kohl",
+   "Gerhard Schröder",
+   "Willy Brandt",
+   "Joschka Fischer"
+  ],
+  "answer": "Joschka Fischer",
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Joschka Fischer was foreign minister, never chancellor."
+ },
+ {
+  "id": "brains-15",
+  "category": "brains",
+  "game": "closer",
+  "prompt": "How tall is the Berlin TV Tower, in metres?",
+  "answer": "368",
+  "tolerance": 30,
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "The Fernsehturm at Alexanderplatz."
+ },
+ {
+  "id": "brains-16",
+  "category": "brains",
+  "game": "closer",
+  "prompt": "How many countries are in the EU?",
+  "answer": "27",
+  "tolerance": 2,
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-17",
+  "category": "brains",
+  "game": "closer",
+  "prompt": "In what year was the first Harry Potter book published?",
+  "answer": "1997",
+  "tolerance": 2,
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-18",
+  "category": "brains",
+  "game": "closer",
+  "prompt": "In what year did the Titanic sink?",
+  "answer": "1912",
+  "tolerance": 3,
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-19",
+  "category": "brains",
+  "game": "closer",
+  "prompt": "How many keys does a standard piano have?",
+  "answer": "88",
+  "tolerance": 5,
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "brains-20",
+  "category": "brains",
+  "game": "closer",
+  "prompt": "How many bones are in the adult human body?",
+  "answer": "206",
+  "tolerance": 15,
+  "difficulty": "hard",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-01",
+  "category": "allplay",
+  "game": "drawoff",
+  "prompt": "A German breakfast",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Think Brötchen, cheese, cold cuts, jam and a boiled egg."
+ },
+ {
+  "id": "allplay-02",
+  "category": "allplay",
+  "game": "drawoff",
+  "prompt": "The world’s worst superhero",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-03",
+  "category": "allplay",
+  "game": "drawoff",
+  "prompt": "Your dream holiday",
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-04",
+  "category": "allplay",
+  "game": "drawoff",
+  "prompt": "A dog walking its owner",
+  "difficulty": "medium",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-05",
+  "category": "allplay",
+  "game": "drawoff",
+  "prompt": "A selfie at the Brandenburg Gate",
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Berlin’s most famous landmark."
+ },
+ {
+  "id": "allplay-06",
+  "category": "allplay",
+  "game": "drawoff",
+  "prompt": "Monday morning",
+  "difficulty": "hard",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-07",
+  "category": "allplay",
+  "game": "estimateoff",
+  "prompt": "How tall is Cologne Cathedral, in metres?",
+  "answer": "157",
+  "tolerance": 15,
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "The Kölner Dom, the huge Gothic cathedral next to Cologne station."
+ },
+ {
+  "id": "allplay-08",
+  "category": "allplay",
+  "game": "estimateoff",
+  "prompt": "In what year did the first iPhone come out?",
+  "answer": "2007",
+  "tolerance": 2,
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-09",
+  "category": "allplay",
+  "game": "estimateoff",
+  "prompt": "How many episodes of “Friends” were made?",
+  "answer": "236",
+  "tolerance": 20,
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-10",
+  "category": "allplay",
+  "game": "estimateoff",
+  "prompt": "In what year did euro coins and notes go into circulation?",
+  "answer": "2002",
+  "tolerance": 2,
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-11",
+  "category": "allplay",
+  "game": "estimateoff",
+  "prompt": "How many stars are on the EU flag?",
+  "answer": "12",
+  "tolerance": 1,
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-12",
+  "category": "allplay",
+  "game": "speedround",
+  "prompt": "Capital cities",
+  "questions": [
+   {
+    "q": "Capital of France?",
+    "a": "Paris"
+   },
+   {
+    "q": "Capital of Italy?",
+    "a": "Rome"
+   },
+   {
+    "q": "Capital of Japan?",
+    "a": "Tokyo"
+   }
+  ],
+  "difficulty": "easy",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-13",
+  "category": "allplay",
+  "game": "speedround",
+  "prompt": "Finish the band name",
+  "questions": [
+   {
+    "q": "Red Hot Chili …",
+    "a": "Peppers"
+   },
+   {
+    "q": "The Rolling …",
+    "a": "Stones"
+   },
+   {
+    "q": "Guns N’ …",
+    "a": "Roses"
+   }
+  ],
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-14",
+  "category": "allplay",
+  "game": "speedround",
+  "prompt": "German words",
+  "questions": [
+   {
+    "q": "What does “Kindergarten” literally mean?",
+    "a": "Children’s garden"
+   },
+   {
+    "q": "What is a “Brötchen”?",
+    "a": "A bread roll"
+   },
+   {
+    "q": "What is a “Späti”?",
+    "a": "A late-night corner shop"
+   }
+  ],
+  "difficulty": "medium",
+  "tone": "clean",
+  "german": true,
+  "hint_en": "Everyday German that has (mostly) made it into English."
+ },
+ {
+  "id": "allplay-15",
+  "category": "allplay",
+  "game": "speedround",
+  "prompt": "Movie night",
+  "questions": [
+   {
+    "q": "Who played Jack in “Titanic”?",
+    "a": "Leonardo DiCaprio"
+   },
+   {
+    "q": "What is the lion cub called in “The Lion King”?",
+    "a": "Simba"
+   },
+   {
+    "q": "Which film has the line “I’ll be back”?",
+    "a": "The Terminator"
+   }
+  ],
+  "difficulty": "easy",
+  "tone": "cheeky",
+  "german": false,
+  "hint_en": null
+ },
+ {
+  "id": "allplay-16",
+  "category": "allplay",
+  "game": "speedround",
+  "prompt": "Science basics",
+  "questions": [
+   {
+    "q": "What is H₂O?",
+    "a": "Water"
+   },
+   {
+    "q": "How many legs does a spider have?",
+    "a": "8"
+   },
+   {
+    "q": "Which gas do plants take in from the air?",
+    "a": "Carbon dioxide"
+   }
+  ],
+  "difficulty": "hard",
+  "tone": "clean",
+  "german": false,
+  "hint_en": null
+ }
+]

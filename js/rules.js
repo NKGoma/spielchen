@@ -15,7 +15,7 @@ export const CATEGORY_INFO = {
 };
 
 export const SPECIALS = {
-  4:  { type: 'pfand',     label: 'Pfand',         icon: 'recycle',     effect: '+2 squares',          tvLine: 'Bottle returned. 25 cents richer.' },
+  4:  { type: 'pfand',     label: 'Pfand',         icon: 'bottle',      effect: '+2 squares',          tvLine: 'Bottle returned. 25 cents richer.' },
   6:  { type: 'allplay',   label: 'All Play',      icon: 'users',       effect: 'Everyone plays',      tvLine: 'Alle zusammen!' },
   9:  { type: 'db',        label: 'Deutsche Bahn', icon: 'train-front', effect: 'Back 3',              tvLine: 'Your train is cancelled. Ersatzverkehr.' },
   11: { type: 'wild',      label: 'Wild',          icon: 'shuffle',     effect: 'You pick',            tvLine: 'Your choice.' },
@@ -114,7 +114,7 @@ export function createGame({ players, teams = null }) {
     lastOrders: null,          // turns left once Last Orders is called
     lastOrdersPending: false,  // true when called mid-turn (that turn doesn't count)
     winnerId: null,            // token id of a Finale winner
-    stats: { dbVictims: {}, steals: {}, fastest: null },
+    stats: { dbVictims: {}, steals: {}, fastest: null, streak: {}, bestStreak: null },
   };
 }
 
@@ -205,6 +205,8 @@ export function applyCardResult(state, { ok, hard = false, finale = false, guess
   const t = activeToken(s);
   const moves = [];
   let won = false;
+  s.stats.streak[t.id] = ok ? (s.stats.streak[t.id] || 0) + 1 : 0;
+  if (ok && (!s.stats.bestStreak || s.stats.streak[t.id] > s.stats.bestStreak.n)) s.stats.bestStreak = { tokenId: t.id, n: s.stats.streak[t.id] };
   if (ok) {
     if (finale) {
       s.winnerId = t.id;
@@ -234,15 +236,42 @@ export function applyCardResult(state, { ok, hard = false, finale = false, guess
   return { state: s, moves, won };
 }
 
-/** All Play: the winner's token (their team's in team mode) moves +2. winnerId may be null (nobody). */
-export function applyAllPlayResult(state, winnerId) {
+/**
+ * All Play: each winner's token (their team's in team mode) moves +2, once per token.
+ * winners: a player id, an array of player ids (ties), or null/[] for nobody.
+ */
+export function applyAllPlayResult(state, winners) {
   const s = clone(state);
   const moves = [];
-  if (winnerId) {
-    const t = tokenOfPlayer(s, winnerId);
-    if (t) setPos(s, t.id, t.pos + 2, moves);
+  const ids = Array.isArray(winners) ? winners : (winners ? [winners] : []);
+  const done = new Set();
+  for (const pid of ids) {
+    const t = tokenOfPlayer(s, pid);
+    if (t && !done.has(t.id)) { done.add(t.id); setPos(s, t.id, t.pos + 2, moves); }
   }
   return { state: s, moves };
+}
+
+/**
+ * Brains quizmaster: holds the answer and judges, so it is never the active player or their teammate.
+ * Free-for-all: the previous player (to the right). Teams: a member of the next team, rotating.
+ */
+export function quizmasterId(s) {
+  const n = s.tokens.length;
+  if (!s.teamMode) {
+    const prev = s.tokens[(s.turnIdx - 1 + n) % n];
+    return prev.memberIds[0];
+  }
+  const other = s.tokens[(s.turnIdx + 1) % n];
+  return other.memberIds[Math.floor(s.turnCount / n) % other.memberIds.length];
+}
+
+/** The single token in the lead, or null when tied (or nobody has moved). */
+export function leaderId(s) {
+  const max = Math.max(...s.tokens.map(t => t.pos));
+  if (max === 0) return null;
+  const lead = s.tokens.filter(t => t.pos === max);
+  return lead.length === 1 ? lead[0].id : null;
 }
 
 /** Pass the turn clockwise. In team mode teams alternate and members rotate. */
@@ -310,5 +339,8 @@ export function autoStats(s) {
   out.push(st ? { label: 'Most steals', value: name(st.playerId), detail: st.n + (st.n === 1 ? ' steal' : ' steals') } : { label: 'Most steals', value: '—', detail: 'honest bunch' });
   const db = top(s.stats.dbVictims);
   out.push(db ? { label: 'Most Deutsche Bahn victims', value: name(db.playerId), detail: db.n + (db.n === 1 ? ' cancelled train' : ' cancelled trains') } : { label: 'Most Deutsche Bahn victims', value: '—', detail: 'the trains ran on time?!' });
+  const bs = s.stats.bestStreak;
+  const bt = bs && s.tokens.find(t => t.id === bs.tokenId);
+  out.push(bs && bs.n >= 2 ? { label: 'Longest streak', value: bt.name, detail: bs.n + ' in a row' } : { label: 'Longest streak', value: '—', detail: 'nobody got on a roll' });
   return out;
 }

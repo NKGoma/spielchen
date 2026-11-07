@@ -1,22 +1,20 @@
 // Spielchen TV / host: state machine, rendering, keyboard (hot-seat) controls.
 import * as R from './rules.js';
-import { Deck, MINI_GAMES, loadBackupDeck } from './deck.js';
+import { Deck, MINI_GAMES, CATEGORY_PLAIN, loadBackupDeck } from './deck.js';
 import { sfx } from './sfx.js';
+import { icon } from './icons.js';
+import { dieHtml, tumble, momentHtml, confetti, reduceMotion } from './fx.js';
+import { commentFor } from './commentary.js';
+import { HostNet, makeRoomCode } from './net.js';
+import { generateDeck, GEN_CATEGORIES } from './generate.js';
+import { getKey, setKey, testKey, MODELS, DEFAULT_MODEL } from './llm.js';
 
 // ---------- utilities ----------
 const $ = sel => document.querySelector(sel);
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const reduceMotion = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-const icon = (name, cls = '') => `<i data-lucide="${name}" class="ic ${cls}"></i>`;
 const lsGet = (k, d) => { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch { return d; } };
 const lsSet = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* private mode */ } };
-
-function drawIcons() {
-  if (window.lucide && window.lucide.createIcons) {
-    try { window.lucide.createIcons({ attrs: { 'stroke-width': 2 } }); } catch { /* ignore */ }
-  }
-}
 
 const TOKEN_COLORS = ['#FF8A3D', '#A78BFA', '#22D3EE', '#F87171', '#A3E635', '#F4F1EA'];
 const EMOJIS = ['🦊', '🐙', '🦉', '🐸', '🦄', '🐻', '🥨', '🍺', '🚲', '🌭', '🎸', '🐝'];
@@ -27,10 +25,11 @@ const PENALTIES = [
   'Explain the rules of Pfand to the group as if it were a TED talk.',
   'Sing the first line of any song as a Deutsche Bahn station announcement.',
   'Do a slow-motion replay of your worst moment of the game.',
+  'Compliment every player in the style of a Eurovision jury: “Douze points for…”.',
 ];
 
 // ---------- board geometry (1920×1080 stage) ----------
-const SQ = 120, PITCH = 168, ROWP = 232, LEFT = 144, TOP = 236;
+const SQ = 120, PITCH = 168, ROWP = 228, LEFT = 144, TOP = 262;
 function squareRect(i) {
   const { row, col, span } = R.squareLayout(i);
   return { x: LEFT + col * PITCH, y: TOP + row * ROWP, w: span === 2 ? PITCH + SQ : SQ, h: SQ };
@@ -41,7 +40,7 @@ const defaultPlayers = () => [0, 1, 2].map(k => ({ id: 'p' + (k + 1), name: '', 
 
 const store = {
   screen: 'setup',            // setup | howto | board | winner
-  settings: Object.assign({ lengthMin: 30, sound: true }, lsGet('spielchen.settings', {})),
+  settings: Object.assign({ lengthMin: 30, sound: true, model: DEFAULT_MODEL, cheeky: 50, german: 25 }, lsGet('spielchen.settings', {})),
   settingsOpen: false,
   hotseat: true,
   setup: { players: lsGet('spielchen.players', null) || defaultPlayers(), teamMode: true, teams: null },
@@ -50,25 +49,30 @@ const store = {
   deck: null,
   phase: 'idle',
   busy: false,
-  card: null,
-  ctx: null,                  // current card context
+  ctx: null,                  // current card / moment context
   die: null,
-  rolling: false,
   displayPos: {},
   clock: null,                // { startedAt, lengthMs, lastOrdersAt }
   timeUp: false,
-  lastOrdersBanner: false,
   undo: [],
   debugBuf: null,
   revealTimer: null,
-  timer: null,                // { endsAt, seconds, startedAt, lastTick }
-  result: null,               // winner screen data
+  timer: null,
+  result: null,
   seenGames: new Set(),
-  toast: null,
+  ovKey: null,
+  ticker: [],
+  net: null,
+  netStatus: 'offline',
+  room: null,
+  gen: null,                  // { id, cards: {category: [...]}, running, failed: Set }
+  deckGenId: null,
+  prefetching: false,
+  keyMsg: '',
 };
+const phoneMode = () => !!store.net && store.net.connected && !store.hotseat;
 
 sfx.setMuted(!store.settings.sound);
-
 function saveSettings() { lsSet('spielchen.settings', store.settings); sfx.setMuted(!store.settings.sound); }
 
 // ---------- names ----------
@@ -80,9 +84,16 @@ const activeTok = () => R.activeToken(store.game);
 // ---------- rendering ----------
 function render() {
   const app = $('#screen');
-  if (store.screen === 'setup') app.innerHTML = renderSetup();
+  if (store.screen === 'setup') {
+    // Keep typing focus across re-renders (e.g. when the phone connects mid-typing).
+    const f = document.activeElement;
+    const k = f && f.classList && f.classList.contains('name') ? f.dataset.k : null;
+    const pos = k != null ? f.selectionStart : 0;
+    app.innerHTML = renderSetup();
+    if (k != null) { const el = app.querySelector(`.name[data-k="${k}"]`); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch { /* ignore */ } } }
+  }
   else if (store.screen === 'howto') app.innerHTML = renderHowTo();
-  else if (store.screen === 'winner') app.innerHTML = renderWinner();
+  else if (store.screen === 'winner') { if (!app.querySelector('.winner')) app.innerHTML = renderWinner(); }
   else if (store.screen === 'board') {
     if (!app.querySelector('.board-screen')) app.innerHTML = renderBoardShell();
     renderBoardDynamic();
@@ -90,7 +101,7 @@ function render() {
   renderTopbar();
   renderOverlay();
   renderSettings();
-  drawIcons();
+  pushPhone();
 }
 
 function logoHtml(size = '') {
@@ -98,18 +109,56 @@ function logoHtml(size = '') {
 }
 
 function renderTopbar() {
-  const bar = $('#topbar');
   const g = store.game;
-  const showClock = store.screen === 'board' && store.clock;
-  bar.innerHTML = `
-    <div class="tb-left">${store.screen === 'board' ? logoHtml('small') : ''}</div>
+  const onBoard = store.screen === 'board' && store.clock;
+  const lo = g && onBoard && g.lastOrders != null;
+  $('#topbar').innerHTML = `
+    <div class="tb-left">${onBoard ? logoHtml('small') : ''}</div>
     <div class="tb-right">
-      <span class="pill" title="Fresh cards arrive in Milestone 3">${icon('layers')} cards: backup deck</span>
-      <span class="pill ${store.hotseat ? 'on' : ''}">${icon('laptop')} Hot-seat ${store.hotseat ? 'on' : 'off'} <kbd>H</kbd></span>
-      ${g && store.screen === 'board' && g.lastOrders != null ? `<span class="pill alert">Last orders · ${g.lastOrders} turn${g.lastOrders === 1 ? '' : 's'} left</span>` : ''}
-      ${showClock ? `<span class="clock" id="clock">${fmtClock()}</span>` : ''}
+      ${freshPill()}
+      ${phonePill()}
+      ${onBoard ? `<div class="clock-pill ${lo ? 'lo' : ''}">
+        ${lo ? `<span class="lo-tag">Last orders · ${g.lastOrders} turn${g.lastOrders === 1 ? '' : 's'}</span>` : ''}
+        <span class="clock" id="clock">${fmtClock()}</span><span class="clock-bar"><i id="clock-fill" style="width:${clockFrac() * 100}%"></i></span></div>` : ''}
       <button class="gear" data-act="settings" aria-label="Settings">${icon('settings')}</button>
     </div>`;
+}
+
+function freshPill() {
+  if (!getKey()) return `<span class="pill" title="Add an API key in Settings for fresh AI cards">${icon('layers')} Backup deck</span>`;
+  const g = store.gen;
+  const n = g ? GEN_CATEGORIES.filter(c => g.cards[c]).length : 0;
+  const busy = g && g.running;
+  return `<span class="pill ${n === 5 ? 'on' : ''}" title="Fresh cards from Claude">${icon('layers')} Fresh cards ${n}/5${busy ? '<i class="spin-dot"></i>' : ''}</span>`;
+}
+
+function phonePill() {
+  if (store.hotseat || !store.net) {
+    return `<span class="pill on">${icon('laptop')} Hot-seat <kbd>H</kbd></span>`;
+  }
+  const st = store.netStatus;
+  const cls = st === 'connected' ? 'ok' : st === 'reconnecting' || st === 'starting' ? 'warn' : 'off';
+  const label = st === 'connected' ? 'Phone connected' : st === 'reconnecting' ? 'Phone reconnecting' : st === 'waiting' ? `Room ${store.room}` : st === 'starting' ? 'Opening room' : 'Phone offline';
+  return `<span class="pill on"><i class="dot ${cls}"></i>${icon('smartphone')} ${label}</span>`;
+}
+
+function phoneUrl() {
+  const u = new URL('phone.html', location.href);
+  u.search = '';
+  u.searchParams.set('room', store.room || '');
+  const peer = new URLSearchParams(location.search).get('peer');
+  if (peer) u.searchParams.set('peer', peer);
+  return u.toString();
+}
+
+function qrSvg(text) {
+  if (typeof window.qrcode !== 'function') return '';
+  try { const q = window.qrcode(0, 'M'); q.addData(text); q.make(); return q.createSvgTag({ cellSize: 8, margin: 2, scalable: true }); } catch { return ''; }
+}
+
+function clockFrac() {
+  if (!store.clock) return 1;
+  return Math.max(0, 1 - (Date.now() - store.clock.startedAt) / store.clock.lengthMs);
 }
 
 function fmtClock() {
@@ -119,47 +168,67 @@ function fmtClock() {
   return `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
 }
 
+function validTeams(t, ps) { return t && t.flat().length === ps.length && ps.every(p => t.flat().includes(p.id)); }
+
 function renderSetup() {
   const ps = store.setup.players;
   const n = ps.length;
   const teamsOk = R.teamsAllowed(n);
   const teamMode = teamsOk && store.setup.teamMode;
-  if (teamMode && (!store.setup.teams || store.setup.teams.flat().length !== n || !store.setup.teams.flat().every(id => ps.some(p => p.id === id)))) {
-    store.setup.teams = R.makeTeams(ps.map(p => p.id));
-  }
+  if (teamMode && !validTeams(store.setup.teams, ps)) store.setup.teams = R.makeTeams(ps.map(p => p.id));
   const rows = ps.map((p, k) => `
     <div class="prow">
-      <button class="tok-btn" style="--c:${p.color}" data-act="color" data-k="${k}" aria-label="Change colour">${p.emoji}</button>
-      <button class="emoji-btn" data-act="emoji" data-k="${k}" aria-label="Change emoji">${icon('smile-plus')}</button>
+      <button class="tok-btn" style="--c:${p.color}" data-act="color" data-k="${k}" aria-label="Change colour"><span>${p.emoji}</span></button>
       <input class="name" data-k="${k}" maxlength="14" placeholder="Player ${k + 1}" value="${esc(p.name)}" autocomplete="off" spellcheck="false">
-      ${n > 2 ? `<button class="x-btn" data-act="remove" data-k="${k}" aria-label="Remove player">${icon('x')}</button>` : '<span class="x-gap"></span>'}
+      <button class="icon-btn" data-act="emoji" data-k="${k}" aria-label="Change emoji">${icon('smile')}</button>
+      ${n > 2 ? `<button class="icon-btn" data-act="remove" data-k="${k}" aria-label="Remove player">${icon('x')}</button>` : '<span class="icon-gap"></span>'}
     </div>`).join('');
   const teamsHtml = teamMode ? `<div class="teams">${store.setup.teams.map((pair, t) => `
       <div class="team"><span class="team-name">Team ${t + 1}</span>${pair.map(id => {
         const p = ps.find(x => x.id === id);
-        return `<span class="chip" style="--c:${p.color}"><span class="chip-tok">${p.emoji}</span>${esc(p.name || 'Player ' + (ps.indexOf(p) + 1))}</span>`;
+        return `<span class="chip"><span class="chip-tok" style="--c:${p.color}">${p.emoji}</span>${esc(p.name || 'Player ' + (ps.indexOf(p) + 1))}</span>`;
       }).join('')}</div>`).join('')}
-      <button class="btn ghost" data-act="reshuffle">${icon('shuffle')} Reshuffle teams</button></div>` : '';
+      <button class="btn ghost small-btn" data-act="reshuffle">${icon('shuffle')} Reshuffle</button></div>` : '';
+  const tiles = R.CATEGORIES.map(c => `<div class="mini-tile cat-${c}">${icon(R.CATEGORY_INFO[c].icon)}<span>${R.CATEGORY_INFO[c].verb}</span></div>`).join('');
   return `
   <div class="setup">
     <div class="setup-left">
       ${logoHtml('big')}
-      <p class="tagline">Roll. Land on a colour. Do the challenge. 30 minutes, tops.</p>
+      <p class="tagline">Roll. Land on a colour. Do the challenge.</p>
       <div class="players">${rows}</div>
       <div class="setup-actions">
         ${n < 6 ? `<button class="btn ghost" data-act="add">${icon('user-plus')} Add player</button>` : ''}
-        ${teamsOk ? `<label class="toggle"><input type="checkbox" data-act="teams" ${store.setup.teamMode ? 'checked' : ''}><span class="sw"></span> Teams of 2</label>` : '<span class="muted small">Teams are available with 4 or 6 players.</span>'}
+        ${teamsOk ? `<label class="toggle"><input type="checkbox" data-act="teams" ${store.setup.teamMode ? 'checked' : ''}><span class="sw"></span> Teams of 2</label>` : '<span class="muted small">Teams of 2 work with 4 or 6 players.</span>'}
       </div>
       ${teamsHtml}
     </div>
     <div class="setup-right">
-      <div class="qr-placeholder">
-        <div class="qr-box">${icon('smartphone', 'big-ic')}</div>
-        <p>Phone remote arrives in Milestone 2.</p>
-        <p class="muted">For now: hot-seat on this laptop. Space, Y, N and 1–6 do everything.</p>
-      </div>
-      <button class="btn primary huge" data-act="start">Start <kbd>Enter</kbd></button>
-      <p class="muted small">Game length: ${store.settings.lengthMin === 2 ? '2 min (test)' : store.settings.lengthMin + ' min'} · change it in Settings ${icon('settings')}</p>
+      ${joinCard(tiles)}
+      <button class="btn primary huge" data-act="start">Start ${icon('arrow-right')}</button>
+      <p class="muted small">${store.settings.lengthMin === 2 ? '2 min test game' : store.settings.lengthMin + '-minute game'} · <kbd>Enter</kbd> to start</p>
+    </div>
+  </div>`;
+}
+
+function joinCard(tiles) {
+  const st = store.netStatus;
+  if (!store.room || st === 'offline') {
+    return `<div class="join-card">
+      <div class="mini-tiles">${tiles}</div>
+      <div class="join-title">${icon('laptop')} Hot-seat mode</div>
+      <p>The phone remote couldn't start here, so everything runs on this laptop: <kbd>Space</kbd> <kbd>Y</kbd> <kbd>N</kbd> and <kbd>1</kbd>–<kbd>6</kbd>.</p>
+    </div>`;
+  }
+  const qr = qrSvg(phoneUrl());
+  const cls = st === 'connected' ? 'ok' : st === 'waiting' ? 'idle' : 'warn';
+  const label = st === 'connected' ? 'Phone connected' : st === 'waiting' ? 'Scan with one phone' : st === 'reconnecting' ? 'Reconnecting…' : 'Opening room…';
+  return `<div class="join-card qr-card">
+    <div class="qr">${qr || `<div class="qr-fallback">${icon('smartphone')}</div>`}</div>
+    <div class="join-info">
+      <div class="join-label"><i class="dot ${cls}"></i>${label}</div>
+      <div class="room-code">${store.room}</div>
+      <div class="join-url">or open <b>phone.html</b> and type the code</div>
+      <div class="join-hot">No phone? Press <kbd>H</kbd> for hot-seat.</div>
     </div>
   </div>`;
 }
@@ -167,34 +236,47 @@ function renderSetup() {
 function renderHowTo() {
   const tiles = R.CATEGORIES.map(c => {
     const info = R.CATEGORY_INFO[c];
-    return `<div class="tile cat-${c}">${icon(info.icon, 'tile-ic')}<div class="tile-verb">${info.verb}</div><div class="tile-name">${info.name}</div></div>`;
+    return `<div class="tile cat-${c}">${icon(info.icon, 'tile-ic')}<div class="tile-verb">${info.verb}</div><div class="tile-plain">${CATEGORY_PLAIN[c]}</div><div class="tile-name">${info.name}</div></div>`;
   }).join('');
   return `
   <div class="howto">
-    <h1>How to play</h1>
-    <p class="howto-line">Roll. Land on a colour. Do the challenge.<br>Get it guessed, stay. Fail, go back.</p>
+    <div class="howto-kicker">How to play</div>
+    <p class="howto-line">Roll. Land on a colour. Do the challenge.<br><span class="muted">Get it guessed: stay. Fail: go back.</span></p>
     <div class="tiles">${tiles}</div>
-    <p class="muted">First to clear the Finale wins — or whoever's furthest when the clock runs out.</p>
+    <p class="muted howto-foot">First to clear the ${icon('trophy')} Finale wins, or whoever is furthest when the clock runs out.</p>
     <button class="btn primary" data-act="skip-howto">Let's go <kbd>Space</kbd></button>
     <div class="howto-bar"><span id="howto-fill"></span></div>
   </div>`;
 }
 
+const SPECIAL_ACCENT = { pfand: 'var(--brains)', allplay: 'var(--text)', db: 'var(--alert)', wild: 'var(--words)', burgeramt: 'var(--muted)' };
+
 function renderBoardShell() {
   const squares = R.BOARD.map(sq => {
     const r = squareRect(sq.i);
-    const cls = sq.type === 'colour' ? `sq colour cat-${sq.category}` : `sq special sp-${sq.type}`;
-    return `<div class="${cls}" style="left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px">
-      <span class="sq-num">${sq.i}</span>${icon(sq.icon, 'sq-ic')}<span class="sq-label">${esc(sq.label)}</span></div>`;
+    const style = `left:${r.x}px;top:${r.y}px;width:${r.w}px;height:${r.h}px`;
+    if (sq.type === 'colour') {
+      return `<div class="sq colour cat-${sq.category}" style="${style}"><span class="sq-num">${sq.i}</span>${icon(sq.icon, 'sq-ic')}<span class="sq-label">${esc(sq.label)}</span></div>`;
+    }
+    if (sq.type === 'start') return `<div class="sq sp-start" style="${style}"><span class="sq-big">Start</span>${icon('arrow-right', 'sq-ic')}</div>`;
+    if (sq.type === 'finale') return `<div class="sq sp-finale" style="${style}"><span class="checks"></span>${icon('trophy', 'sq-ic')}<span class="sq-big">Finale</span></div>`;
+    const wild = sq.type === 'wild' ? `<span class="wild-dots">${R.CATEGORIES.map(c => `<i class="cat-${c}"></i>`).join('')}</span>` : '';
+    return `<div class="sq special sp-${sq.type}" style="${style};--acc:${SPECIAL_ACCENT[sq.type]}"><span class="sq-num">${sq.i}</span>${icon(sq.icon, 'sq-ic')}<span class="sq-label">${esc(sq.type === 'db' ? 'Bahn' : sq.label)}</span>${wild}</div>`;
   }).join('');
   const pts = R.BOARD.map(sq => { const r = squareRect(sq.i); return `${r.x + r.w / 2},${r.y + r.h / 2}`; }).join(' ');
   return `
   <div class="board-screen">
-    <svg class="path" width="1920" height="1080" aria-hidden="true"><polyline points="${pts}" /></svg>
+    <svg class="path" width="1920" height="1080" aria-hidden="true">
+      <defs><pattern id="dots" width="32" height="32" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="2" fill="#1C2028"/></pattern></defs>
+      <rect width="1920" height="1080" fill="url(#dots)"/>
+      <polyline class="road" points="${pts}"/>
+      <polyline class="road-dash" points="${pts}"/>
+    </svg>
     <div class="squares">${squares}</div>
     <div id="tokens"></div>
-    <div class="turn-banner" id="banner"></div>
-    <div class="chips" id="chips"></div>
+    <div class="nowup" id="banner"></div>
+    <div class="dock" id="dock"></div>
+    <div class="ticker" id="ticker"></div>
   </div>`;
 }
 
@@ -202,29 +284,38 @@ function renderBoardDynamic() {
   renderTokens();
   const g = store.game;
   const banner = $('#banner');
-  if (banner) {
+  if (banner && g) {
     let html = '';
-    if (g && store.phase === 'pass') {
+    const ph = store.phase;
+    if (ph === 'pass' || ph === 'rolling' || ph === 'moving') {
       const t = activeTok();
       const p = P(activePid());
       const mate = g.teamMode ? R.teammateId(g) : null;
-      html = `<span class="banner-tok" style="--c:${p.color}">${p.emoji}</span>
-        <span><b>${esc(p.name)}'s turn</b>${mate ? ` · ${esc(pname(mate))} guesses` : ''}${g.teamMode ? ` <span class="muted">(${esc(t.name)})</span>` : ''}</span>
-        <span class="banner-key">${R.needsFinaleWithoutRoll(g) ? 'Space for the Finale' : 'Space to roll'}</span>`;
-    } else if (g && (store.phase === 'rolling' || store.phase === 'moving') ) {
-      html = `<span class="die ${store.rolling ? 'tumble' : ''}" id="die">${store.die ?? ''}</span><span><b>${esc(pname(activePid()))}</b> ${store.rolling ? 'rolls…' : 'rolled ' + store.die}</span>`;
+      const sub = [mate ? `${esc(pname(mate))} guesses` : 'Everyone else guesses', g.teamMode ? esc(t.name) : null].filter(Boolean).join(' · ');
+      const right = ph === 'pass'
+        ? `<div class="nowup-key"><kbd>Space</kbd> ${R.needsFinaleWithoutRoll(g) ? 'Play the Finale' : 'Roll'}</div>`
+        : `<div class="nowup-die">${dieHtml()}</div>`;
+      html = `<div class="nowup-tok" style="--c:${p.color}">${p.emoji}</div>
+        <div class="nowup-text"><div class="nowup-label">Now up</div><div class="nowup-name">${esc(p.name)}</div><div class="nowup-sub">${sub}</div></div>${right}`;
     }
-    banner.innerHTML = html;
+    // Keep the die element alive during the roll so its animation isn't reset.
+    if (!(ph === 'moving' && banner.querySelector('#cube'))) banner.innerHTML = html;
     banner.classList.toggle('show', !!html);
   }
-  const chips = $('#chips');
-  if (chips && g) {
-    chips.innerHTML = g.tokens.map((t, k) => {
+  const dock = $('#dock');
+  if (dock && g) {
+    const lead = R.leaderId(g);
+    dock.innerHTML = g.tokens.map((t, k) => {
       const active = k === g.turnIdx;
-      const members = g.teamMode ? `<span class="chip-sub">${t.memberIds.map(pname).map(esc).join(' + ')}</span>` : '';
-      return `<div class="pchip ${active ? 'active' : ''}" style="--c:${t.color}">
-        <span class="chip-tok">${t.emoji}</span><span class="chip-name">${esc(t.name)}${members}</span>
-        <span class="chip-pos">${t.pos === R.FINALE ? '🏁' : t.pos}</span>${t.skipNext ? `<span class="chip-skip">${icon('stamp')}</span>` : ''}</div>`;
+      const streak = (g.stats.streak || {})[t.id] || 0;
+      const members = g.teamMode ? `<span class="pc-sub">${t.memberIds.map(pname).map(esc).join(' + ')}</span>` : '';
+      return `<div class="pcard ${active ? 'active' : ''}" style="--c:${t.color}">
+        <span class="pc-tok">${t.emoji}${lead === t.id ? `<span class="pc-crown">${icon('crown')}</span>` : ''}</span>
+        <span class="pc-name">${esc(t.name)}${members}</span>
+        <span class="pc-badges">${streak >= 2 ? `<span class="pc-fire">${icon('flame')}${streak}</span>` : ''}${t.skipNext ? `<span class="pc-skip">${icon('stamp')}</span>` : ''}</span>
+        <span class="pc-pos">${t.pos}<small>/23</small></span>
+        <span class="pc-bar"><i style="width:${(t.pos / R.FINALE) * 100}%"></i></span>
+      </div>`;
     }).join('');
   }
 }
@@ -235,6 +326,7 @@ function renderTokens() {
   const toks = store.game.tokens;
   const groups = {};
   toks.forEach(t => { const p = store.displayPos[t.id] ?? t.pos; (groups[p] = groups[p] || []).push(t.id); });
+  const activeId = store.game.tokens[store.game.turnIdx].id;
   for (const t of toks) {
     let el = layer.querySelector(`[data-id="${t.id}"]`);
     if (!el) {
@@ -242,160 +334,201 @@ function renderTokens() {
       el.className = 'token';
       el.dataset.id = t.id;
       el.style.setProperty('--c', t.color);
-      el.innerHTML = `<span>${t.emoji}</span>`;
+      el.innerHTML = `<span class="tok-shadow"></span><span class="tok-body"><span>${t.emoji}</span></span>`;
       layer.appendChild(el);
     }
     const pos = store.displayPos[t.id] ?? t.pos;
     const grp = groups[pos];
     const k = grp.indexOf(t.id);
     const r = squareRect(pos);
-    const offs = [[0, 0], [26, 18], [-26, 18], [26, -18], [-26, -18], [0, 30]];
+    const offs = [[0, 0], [30, 10], [-30, 10], [30, -22], [-30, -22], [0, 26]];
     const [ox, oy] = grp.length > 1 ? offs[k] : [0, 0];
-    const x = r.x + r.w / 2 - 28 + ox;
-    const y = r.y - 30 + oy;
-    el.style.transform = `translate(${x}px, ${y}px)`;
-    el.classList.toggle('active', store.game.tokens[store.game.turnIdx].id === t.id);
+    el.style.transform = `translate(${r.x + r.w / 2 - 32 + ox}px, ${r.y - 34 + oy}px)`;
+    el.style.zIndex = t.id === activeId ? 5 : 2 + k;
+    el.classList.toggle('active', t.id === activeId && store.phase === 'pass');
   }
-}
-
-function catTag(cat) {
-  const info = R.CATEGORY_INFO[cat];
-  return `<div class="cat-tag">${icon(info.icon)} <span>${info.verb}</span> <span class="cat-name">· ${info.name}</span></div>`;
 }
 
 function diffDots(d) {
   const n = { easy: 1, medium: 2, hard: 3 }[d] || 1;
-  return `<div class="diff">${[1, 2, 3].map(k => `<span class="dot ${k <= n ? 'on' : ''}"></span>`).join('')}<span>${d[0].toUpperCase() + d.slice(1)}</span></div>`;
+  return `<span class="diff">${[1, 2, 3].map(k => `<i class="${k <= n ? 'on' : ''}"></i>`).join('')}${d[0].toUpperCase() + d.slice(1)}</span>`;
 }
 
-function chipPicker(pids, { nobody = false } = {}) {
+function chipPicker(pids, { nobody = false, label = 'Nobody' } = {}) {
   const all = store.game.players;
   return `<div class="pick-chips">${pids.map(pid => {
     const p = P(pid); const num = all.findIndex(x => x.id === pid) + 1;
-    return `<button class="pick-chip" style="--c:${p.color}" data-act="pick-player" data-pid="${pid}"><kbd>${num}</kbd><span class="chip-tok">${p.emoji}</span>${esc(p.name)}</button>`;
-  }).join('')}${nobody ? `<button class="pick-chip nobody" data-act="pick-player" data-pid=""><kbd>0</kbd>Nobody</button>` : ''}</div>`;
+    return `<button class="pick-chip" data-act="pick-player" data-pid="${pid}"><kbd>${num}</kbd><span class="chip-tok" style="--c:${p.color}">${p.emoji}</span>${esc(p.name)}</button>`;
+  }).join('')}${nobody ? `<button class="pick-chip nobody" data-act="pick-player" data-pid=""><kbd>0</kbd>${label}</button>` : ''}</div>`;
 }
 
-function timerRing(seconds) {
-  return `<div class="ring-wrap"><svg class="ring" viewBox="0 0 200 200"><circle class="ring-bg" cx="100" cy="100" r="88"/><circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="88"/></svg><div class="ring-num" id="ring-num">${seconds}</div></div>`;
+function timerRing(seconds, cls = '') {
+  return `<div class="ring-wrap ${cls}"><svg class="ring" viewBox="0 0 200 200"><circle class="ring-bg" cx="100" cy="100" r="88"/><circle class="ring-fg" id="ring-fg" cx="100" cy="100" r="88"/></svg><div class="ring-num" id="ring-num">${seconds}</div></div>`;
 }
 
 function renderOverlay() {
   const ov = $('#overlay');
-  const html = overlayHtml();
-  if (!html) { ov.innerHTML = ''; ov.className = ''; return; }
+  const { html, key } = overlayHtml();
+  $('#stage').classList.toggle('ov-open', !!html);
+  if (!html) { ov.innerHTML = ''; ov.className = ''; store.ovKey = null; return; }
   ov.className = 'show';
   ov.innerHTML = html;
-  if (store.ctx && !store.ctx.washed && ov.querySelector('.ov-cat')) {
-    ov.querySelector('.ov-cat').classList.add('wash');
-    store.ctx.washed = true;
-  }
+  const first = key !== store.ovKey;
+  store.ovKey = key;
+  const root = ov.firstElementChild;
+  if (root && first) root.classList.add('enter');
   updateTimerUi();
 }
 
 function overlayHtml() {
   const ph = store.phase;
   const g = store.game;
-  if (store.screen !== 'board' || !g) return '';
+  const none = { html: '', key: null };
+  if (store.screen !== 'board' || !g) return none;
   const ctx = store.ctx;
   if (ph === 'special' || ph === 'skipped') {
-    const sq = ctx.square;
-    return `<div class="ov ov-special sp-${sq.type}"><div class="ov-inner">
-      ${icon(sq.icon, 'special-ic')}<div class="special-label">${esc(sq.label)}</div>
-      <div class="special-line">${esc(ph === 'skipped' ? `${pname(ctx.pid)} skips this turn. No Termin.` : sq.tvLine)}</div>
-      <div class="special-effect muted">${esc(sq.effect)}</div></div></div>`;
+    return { key: 'sp-' + g.turnCount + ph, html: `<div class="ov ov-moment sp-${ctx.square.type}">${momentHtml(ctx.square, { skippedName: ph === 'skipped' ? pname(ctx.pid) : null })}</div>` };
   }
   if (ph === 'pick') {
     const tiles = R.CATEGORIES.map((c, k) => {
       const info = R.CATEGORY_INFO[c];
-      return `<button class="tile cat-${c}" data-act="pick-cat" data-cat="${c}"><kbd>${k + 1}</kbd>${icon(info.icon, 'tile-ic')}<div class="tile-verb">${info.verb}</div><div class="tile-name">${info.name}</div></button>`;
+      return `<button class="tile cat-${c}" data-act="pick-cat" data-cat="${c}"><kbd>${k + 1}</kbd>${icon(info.icon, 'tile-ic')}<div class="tile-verb">${info.verb}</div><div class="tile-plain">${CATEGORY_PLAIN[c]}</div></button>`;
     }).join('');
-    const title = ctx.finale
-      ? `Final challenge for ${esc(pname(activePid()))}!`
-      : `${esc(pname(activePid()))}, your choice.`;
-    const sub = ctx.finale ? 'Everyone else picks the category. The card will be Hard. Clear it and win.' : 'Pick a category.';
-    return `<div class="ov ov-pick"><div class="ov-inner"><h2>${title}</h2><p class="muted">${sub}</p><div class="tiles">${tiles}</div></div></div>`;
+    const name = esc(pname(activePid()));
+    const head = ctx.finale
+      ? `<div class="kicker">${icon('trophy')} Final challenge</div><h2>Everyone else: pick ${name}'s category</h2><p class="muted">It's a Hard card. Get it right and ${name} wins the game.</p>`
+      : `<div class="kicker">${icon('shuffle')} Wild</div><h2>${name}, pick a category</h2><p class="muted">Press 1–4.</p>`;
+    return { key: 'pick-' + g.turnCount, html: `<div class="ov ov-pick ${ctx.finale ? 'finale' : ''}"><div class="ov-inner">${head}<div class="tiles">${tiles}</div></div></div>` };
   }
-  if (ph === 'reveal') return revealHtml();
-  if (ctx && ctx.allplay && ph.startsWith('ap-')) return allPlayHtml();
-  if (ctx && ctx.card && ['card-hidden', 'card-ready', 'running', 'timeup', 'guesser', 'steal'].includes(ph)) return cardHtml();
-  return '';
+  if (ph === 'reveal') return { key: 'rv-' + ctx.card.id + (ctx.peeks || 0), html: revealHtml() };
+  if (ctx && ctx.allplay && ph.startsWith('ap-')) return { key: 'ap-' + ctx.card.id, html: allPlayHtml() };
+  if (ctx && ctx.card && ['card-hidden', 'card-ready', 'running', 'timeup', 'guesser', 'steal'].includes(ph)) return { key: 'card-' + ctx.card.id + (ctx.sudden ? 's' : ''), html: cardHtml() };
+  return none;
+}
+
+function whoLine(card) {
+  const g = store.game;
+  if (store.ctx.sudden) return `${icon('users')} Tied players race to shout`;
+  if (card.category === 'brains') return `${icon('eye')} Quizmaster: <b>${esc(pname(store.ctx.quizmaster))}</b>`;
+  if (g.teamMode) return `${icon('users')} <b>${esc(pname(R.teammateId(g)))}</b> guesses`;
+  return `${icon('users')} Everyone else races to guess`;
+}
+
+function questionHtml(card) {
+  let h = `<div class="question">${esc(card.prompt)}</div>`;
+  if (card.options) h += `<div class="options">${card.options.map((o, k) => `<span><b>${'ABCD'[k]}</b>${esc(o)}</span>`).join('')}</div>`;
+  return h;
 }
 
 function cardHtml() {
-  const { card, finale, sudden } = store.ctx;
+  const { card, finale, sudden, quizmaster } = store.ctx;
   const ph = store.phase;
   const g = store.game;
   const mg = MINI_GAMES[card.game];
+  const info = R.CATEGORY_INFO[card.category];
   const brains = card.category === 'brains';
   const name = esc(pname(activePid()));
+  const tvLine = sudden ? 'First tied player to shout the right answer wins the game.' : esc(mg.tv(pname(activePid()), card));
+  const showQuestion = brains && ph !== 'card-hidden';
+  const isNew = !store.seenGames.has(card.game) && !sudden;
   let action = '';
   if (ph === 'card-hidden') {
-    action = sudden
-      ? `<div class="big-line">Sudden death: ${esc(sudden.names)}</div><div class="hint-line">Tied players look away. Someone else is the reader: press <kbd>Space</kbd> to peek (6 s).</div>`
-      : `<div class="big-line">Everyone except ${name}, look away</div><div class="hint-line">${name}: press <kbd>Space</kbd> to peek at the card (6 s).</div>`;
+    if (sudden) action = `<div class="look-away">${icon('eye-off')} Sudden death: ${esc(sudden.names)}</div><div class="hint-line">Someone who isn't tied is quizmaster: <kbd>Space</kbd> to peek at the answer (6 s).</div>`;
+    else if (brains && phoneMode()) action = `<div class="look-away">${icon('smartphone')} Pass the phone to ${esc(pname(quizmaster))}</div><div class="hint-line">${esc(pname(quizmaster))} has the answer. Tap Start, then read the question out loud.</div>`;
+    else if (phoneMode()) action = `<div class="look-away">${icon('smartphone')} ${name}, check the phone</div><div class="hint-line">Hold to peek at the card, then tap Start.</div>`;
+    else if (brains) action = `<div class="look-away">${icon('eye-off')} Everyone except ${esc(pname(quizmaster))}, look away</div><div class="hint-line">${esc(pname(quizmaster))} is quizmaster: <kbd>Space</kbd> to peek at the answer (6 s).</div>`;
+    else action = `<div class="look-away">${icon('eye-off')} Everyone except ${name}, look away</div><div class="hint-line">${name}: <kbd>Space</kbd> to peek at the card (6 s).</div>`;
+  } else if (ph === 'card-ready' && phoneMode()) {
+    action = `<div class="hint-line">Tap Start on the phone when ready</div>`;
   } else if (ph === 'card-ready') {
-    action = `<div class="hint-line"><kbd>Space</kbd> start the ${mg.seconds} s timer · <kbd>P</kbd> peek again</div>`;
+    action = `<div class="hint-line"><kbd>Space</kbd> start the ${mg.seconds} s timer${brains ? ' and read the question out' : ''} · <kbd>P</kbd> peek again</div>`;
   } else if (ph === 'running' || ph === 'timeup') {
-    action = `${timerRing(mg.seconds)}<div class="hint-line">${ph === 'timeup' ? '<b>Time!</b> ' : ''}<kbd>Y</kbd> ${brains ? 'Correct' : 'Got it'} · <kbd>N</kbd> ${brains ? 'Wrong' : 'Failed'}</div>`;
+    const judge = brains && !sudden ? `${esc(pname(quizmaster))} judges: ` : '';
+    action = `${timerRing(mg.seconds, brains ? 'small' : '')}<div class="hint-line">${ph === 'timeup' ? '<b>Time!</b> ' : ''}${judge}<kbd>Y</kbd> ${brains ? 'Correct' : 'Got it'} · <kbd>N</kbd> ${brains ? 'Wrong' : 'Failed'}</div>`;
   } else if (ph === 'guesser') {
     const pids = sudden ? sudden.pids : R.otherPlayers(g).map(p => p.id);
-    action = `<div class="big-line">${sudden ? 'Who shouted it first?' : 'Who guessed first?'}</div>${chipPicker(pids)}<div class="hint-line"><kbd>Esc</kbd> back</div>`;
+    action = `<div class="big-line">${sudden ? 'Who shouted it first?' : 'Who guessed it first?'}</div>${chipPicker(pids)}<div class="hint-line"><kbd>Esc</kbd> back</div>`;
   } else if (ph === 'steal') {
-    action = `<div class="big-line">Another team gets one guess. Did they steal it?</div>${chipPicker(R.otherPlayers(g).map(p => p.id), { nobody: true })}`;
+    const q = brains ? `Wrong! ${g.teamMode ? 'The other team gets one guess.' : 'Anyone else can shout it.'}` : 'The other team gets one guess.';
+    action = `<div class="big-line">${q}</div>${chipPicker(stealOptions(), { nobody: true })}${brains ? `<div class="hint-line">${esc(pname(quizmaster))} picks who stole it, or <kbd>0</kbd> nobody</div>` : ''}`;
   }
-  return `<div class="ov ov-cat cat-${card.category}"><div class="ov-inner">
-    ${catTag(card.category)}
-    ${finale ? '<div class="finale-tag">Final challenge</div>' : ''}
-    <div class="game-name">${esc(mg.name)}</div>
-    <div class="game-rule">${esc(mg.rule)}</div>
-    ${diffDots(card.difficulty)}
-    <div class="ov-action">${action}</div>
-  </div></div>`;
+  return `<div class="ov ov-cat cat-${card.category} ${store.ctx.washed ? '' : 'wash'} ${brains ? 'is-brains' : ''}">
+    <div class="watermark">${icon(info.icon)}</div>
+    <div class="ov-inner">
+      <div class="cat-head"><span class="cat-pill">${icon(info.icon)} ${info.verb}</span><span class="cat-plain">${CATEGORY_PLAIN[card.category]}</span><span class="cat-pun">${info.name}</span></div>
+      ${finale ? `<div class="finale-tag">${icon('trophy')} Final challenge · win it to win the game</div>` : ''}
+      <div class="game-name">${isNew ? '<span class="new-tag">New</span>' : ''}${esc(mg.name)}</div>
+      ${showQuestion ? questionHtml(card) : `<div class="tv-line">${tvLine}</div>`}
+      <div class="meta">${diffDots(card.difficulty)}<span class="sep"></span><span>${whoLine(card)}</span><span class="sep"></span><span>${icon('timer')} ${mg.seconds} s</span></div>
+      <div class="ov-action">${action}</div>
+    </div>
+  </div>`;
 }
 
-/** The ONLY place a secret card is rendered on the TV (hot-seat privacy step). */
+/** The ONLY place a secret is rendered on the TV (hot-seat privacy step). */
 function revealHtml() {
-  const c = store.ctx.card;
-  const mg = MINI_GAMES[c.game];
-  const rows = [];
-  if (c.accent) rows.push(`<div class="rv-row"><span class="rv-k">Accent</span>${esc(c.accent)}</div>`);
-  if (c.forbidden) rows.push(`<div class="rv-row"><span class="rv-k">Forbidden</span>${c.forbidden.map(esc).join(' · ')}</div>`);
-  if (c.options) rows.push(`<div class="rv-row"><span class="rv-k">Options</span>${c.options.map(esc).join(' · ')}</div>`);
-  if (c.answer != null) rows.push(`<div class="rv-row"><span class="rv-k">${c.game === 'hum' ? 'Artist' : 'Answer'}</span>${esc(c.answer)}${c.tolerance != null ? ` <span class="muted">(± ${esc(c.tolerance)} counts)</span>` : ''}</div>`);
-  if (c.hint_en) rows.push(`<div class="rv-row hint"><span class="rv-k">For non-Germans</span>${esc(c.hint_en)}</div>`);
-  const who = store.ctx.sudden ? 'Reader only' : `${esc(pname(activePid()))} only`;
-  return `<div class="ov ov-reveal cat-${c.category}"><div class="ov-inner">
-    <div class="rv-who">${icon('eye')} ${who} · ${esc(mg.name)}</div>
-    <div class="rv-prompt" id="secret">${esc(c.prompt)}</div>
-    ${rows.join('')}
+  const { card, sudden, quizmaster } = store.ctx;
+  const mg = MINI_GAMES[card.game];
+  const info = R.CATEGORY_INFO[card.category];
+  const brains = card.category === 'brains';
+  let body = '';
+  if (brains) {
+    body = `<div class="pk-label">Answer</div><div class="pk-main" id="secret">${esc(card.answer)}</div>
+      ${card.tolerance != null ? `<div class="pk-row">Counts if within ± ${esc(card.tolerance)}</div>` : ''}
+      <div class="pk-row muted">Question: ${esc(card.prompt)}</div>`;
+  } else {
+    body = `<div class="pk-label">${card.game === 'hum' ? 'Hum this song' : card.category === 'draw' ? 'Draw this' : card.category === 'act' ? 'Act this' : 'Your word'}</div>
+      <div class="pk-main" id="secret">${esc(card.prompt)}</div>
+      ${card.game === 'hum' && card.answer ? `<div class="pk-row">by ${esc(card.answer)}</div>` : ''}
+      ${card.accent ? `<div class="pk-row">Accent: <b>${esc(card.accent)}</b></div>` : ''}
+      ${card.forbidden ? `<div class="pk-label">Don't say</div><div class="pk-chips">${card.forbidden.map(w => `<span>${esc(w)}</span>`).join('')}</div>` : ''}`;
+  }
+  if (card.hint_en) body += `<div class="pk-hint">${icon('lightbulb')} ${esc(card.hint_en)}</div>`;
+  const who = sudden ? 'Quizmaster only' : brains ? `${esc(pname(quizmaster))} only` : `${esc(pname(activePid()))} only`;
+  return `<div class="ov ov-reveal"><div class="ov-inner">
+    <div class="rv-who">${icon('eye')} ${who}</div>
+    <div class="peek-card cat-${card.category}">
+      <div class="pk-head">${icon(info.icon)} ${esc(mg.name)} ${diffDots(card.difficulty)}</div>
+      <div class="pk-body">${body}</div>
+    </div>
     <div class="rv-bar"><span id="rv-fill"></span></div>
     <div class="hint-line"><kbd>Space</kbd> hide now</div>
   </div></div>`;
 }
 
 function allPlayHtml() {
-  const { card } = store.ctx;
+  const { card, sr } = store.ctx;
   const ph = store.phase;
   const mg = MINI_GAMES[card.game];
   const g = store.game;
-  let body = `<div class="ap-prompt">${esc(card.prompt)}</div>`;
-  if (card.game === 'speedround') {
-    body += `<ol class="ap-qs">${card.questions.map(q => `<li>${esc(q.q)}${ph === 'ap-pick' ? ` <span class="ap-a">${esc(q.a)}</span>` : ''}</li>`).join('')}</ol>`;
-  }
-  if (card.game === 'estimateoff' && ph === 'ap-pick') body += `<div class="ap-answer">Answer: <b>${esc(card.answer)}</b></div>`;
-  if (card.hint_en) body += `<div class="ap-hint muted">${esc(card.hint_en)}</div>`;
+  let body = '';
   let action = '';
-  if (ph === 'ap-ready') action = `<div class="hint-line"><kbd>Space</kbd> start the ${mg.seconds} s timer</div>`;
-  else if (ph === 'ap-running') action = `${timerRing(mg.seconds)}<div class="hint-line"><kbd>Space</kbd> stop early</div>`;
-  else if (ph === 'ap-pick') action = `<div class="big-line">Who won? +2 squares${g.teamMode ? ' for their team' : ''}</div>${chipPicker(g.players.map(p => p.id), { nobody: true })}`;
-  return `<div class="ov ov-allplay"><div class="ov-inner">
-    <div class="cat-tag">${icon('users')} <span>All Play</span> <span class="cat-name">· Alle zusammen!</span></div>
-    <div class="game-name">${esc(mg.name)}</div>
-    <div class="game-rule">${esc(mg.rule)}</div>
-    ${body}
-    <div class="ov-action">${action}</div>
-  </div></div>`;
+  if (card.game === 'speedround' && sr && (ph === 'ap-q' || ph === 'ap-a')) {
+    const q = card.questions[sr.i];
+    const tally = g.players.filter(p => sr.score[p.id]).map(p => `<span class="tally"><span class="chip-tok" style="--c:${p.color}">${p.emoji}</span>${sr.score[p.id]}</span>`).join('');
+    body = `<div class="sr-count">Question ${sr.i + 1} of 3</div><div class="question">${esc(q.q)}</div>
+      ${ph === 'ap-a' ? `<div class="sr-answer">${icon('check')} ${esc(q.a)}</div>` : ''}<div class="tallies">${tally}</div>`;
+    action = ph === 'ap-q'
+      ? `<div class="hint-line">Everyone shout! <kbd>Space</kbd> reveal the answer</div>`
+      : `<div class="big-line small">Who shouted it first?</div>${chipPicker(g.players.map(p => p.id), { nobody: true })}`;
+  } else {
+    body = `<div class="ap-prompt">${esc(card.prompt)}</div>`;
+    if (card.game === 'estimateoff' && ph === 'ap-pick') body += `<div class="sr-answer">${icon('check')} Answer: ${esc(card.answer)}</div>`;
+    if (card.hint_en) body += `<div class="ap-hint">${icon('lightbulb')} ${esc(card.hint_en)}</div>`;
+    if (ph === 'ap-ready') action = `<div class="hint-line"><kbd>Space</kbd> ${card.game === 'speedround' ? 'first question' : `start the ${mg.seconds} s timer`}</div>`;
+    else if (ph === 'ap-running') action = `${timerRing(mg.seconds, 'small')}<div class="hint-line"><kbd>Space</kbd> stop early</div>`;
+    else if (ph === 'ap-pick') action = `<div class="big-line small">${card.game === 'estimateoff' ? 'Who was closest?' : 'Who drew the best one?'} +2${g.teamMode ? ' for their team' : ''}</div>${chipPicker(g.players.map(p => p.id), { nobody: true })}`;
+  }
+  return `<div class="ov ov-allplay">
+    <div class="stripe">${R.CATEGORIES.map(c => `<i class="cat-${c}"></i>`).join('')}</div>
+    <div class="ov-inner">
+      <div class="cat-head"><span class="cat-pill light">${icon('users')} All Play</span><span class="cat-plain">${CATEGORY_PLAIN.allplay}</span></div>
+      <div class="game-name">${esc(mg.name)}</div>
+      <div class="tv-line">${esc(mg.tv())}</div>
+      ${body}
+      <div class="ov-action">${action}</div>
+    </div>
+  </div>`;
 }
 
 function renderWinner() {
@@ -407,17 +540,16 @@ function renderWinner() {
   const podium = order.map(t => {
     const place = rank.indexOf(t) + 1;
     const members = g.teamMode ? `<div class="pod-sub">${t.memberIds.map(pname).map(esc).join(' + ')}</div>` : '';
-    return `<div class="pod place-${place}" style="--c:${t.color}"><div class="pod-tok">${t.emoji}</div><div class="pod-name">${esc(t.name)}</div>${members}<div class="pod-block">${place}</div></div>`;
+    return `<div class="pod place-${place}" style="--c:${t.color}"><div class="pod-tok">${t.emoji}${place === 1 ? `<span class="pod-crown">${icon('crown')}</span>` : ''}</div><div class="pod-name">${esc(t.name)}</div>${members}<div class="pod-block"><span>${place}</span></div></div>`;
   }).join('');
-  const stats = res.stats.map(s => `<div class="stat"><div class="stat-label">${esc(s.label)}</div><div class="stat-value">${esc(s.value)}</div><div class="stat-detail muted">${esc(s.detail)}</div></div>`).join('');
+  const stats = res.stats.map((s, k) => `<div class="stat" style="animation-delay:${1.4 + k * 0.15}s"><div class="stat-label">${esc(s.label)}</div><div class="stat-value">${esc(s.value)}</div><div class="stat-detail">${esc(s.detail)}</div></div>`).join('');
   return `
   <div class="winner">
-    <div class="confetti" id="confetti"></div>
+    <div class="win-kicker">${esc(res.reason)}</div>
     <h1>${esc(rank[0].name)} win${g.teamMode ? '' : 's'}!</h1>
-    <p class="muted">${esc(res.reason)}</p>
     <div class="podium">${podium}</div>
     <div class="stats">${stats}</div>
-    <div class="penalty"><div class="pen-label">${icon('gavel')} Penalty for ${esc(res.last.name)}</div><div class="pen-text">${esc(res.penalty)}</div></div>
+    <div class="ticket"><div class="ticket-head">${icon('receipt')} Strafzettel · ${esc(res.last.name)}</div><div class="ticket-text">${esc(res.penalty)}</div></div>
     <div class="win-actions">
       <button class="btn primary" data-act="rematch">Rematch <kbd>R</kbd></button>
       <button class="btn ghost" data-act="newgame">New game <kbd>N</kbd></button>
@@ -429,41 +561,213 @@ function renderSettings() {
   const el = $('#settings');
   if (!store.settingsOpen) { el.className = ''; el.innerHTML = ''; return; }
   const s = store.settings;
+  const hasKey = !!getKey();
   el.className = 'show';
   el.innerHTML = `<div class="settings-card">
     <h2>Settings</h2>
+    <label class="field col"><span>Anthropic API key <span class="muted small">(stays in this browser only)</span></span>
+      <span class="key-row"><input id="set-key" type="password" autocomplete="off" spellcheck="false" placeholder="${hasKey ? 'Saved. Paste a new key to replace it' : 'sk-ant-…'}">
+      <button class="btn ghost small-btn" data-act="test-key">Test key</button>${hasKey ? `<button class="btn ghost small-btn" data-act="forget-key">Forget</button>` : ''}</span>
+      <span class="key-msg" id="key-msg">${esc(store.keyMsg)}</span></label>
+    <label class="field"><span>Model</span>
+      <select id="set-model">${MODELS.map(m => `<option value="${m.id}" ${s.model === m.id ? 'selected' : ''}>${m.label}</option>`).join('')}</select></label>
     <label class="field"><span>Game length</span>
       <select id="set-length">${[20, 30, 40, 2].map(m => `<option value="${m}" ${s.lengthMin === m ? 'selected' : ''}>${m === 2 ? '2 min (test)' : m + ' min'}</option>`).join('')}</select></label>
+    <label class="field"><span>Clean ↔ cheeky</span><input type="range" id="set-cheeky" min="0" max="100" step="10" value="${s.cheeky}"></label>
+    <label class="field"><span>German flavour <b id="german-val">${s.german}%</b></span><input type="range" id="set-german" min="0" max="50" step="5" value="${s.german}"></label>
     <label class="toggle"><input type="checkbox" id="set-sound" ${s.sound ? 'checked' : ''}><span class="sw"></span> Sound <kbd>M</kbd></label>
-    <p class="muted small">API key, model, cheekiness and German-flavour sliders arrive with fresh decks (Milestone 3).</p>
-    <div class="win-actions"><button class="btn primary" data-act="save-settings">Save</button></div>
+    <div class="win-actions"><button class="btn ghost" data-act="close-settings">Cancel</button><button class="btn primary" data-act="save-settings">Save</button></div>
   </div>`;
+}
+
+// ---------- fresh decks ----------
+const genSettings = () => ({ germanPct: store.settings.german, cleanPct: 100 - Math.round(store.settings.cheeky * 0.6) });
+
+/** Generate a deck in the background. target 'current' feeds the live game; 'next' is saved for Rematch. */
+async function runGeneration(target = 'current') {
+  const key = getKey();
+  if (!key || !store.backupCards.length) return;
+  if (target === 'current' && store.gen && store.gen.running) return;
+  const gen = { id: Date.now() + Math.random(), cards: {}, running: true };
+  if (target === 'current') store.gen = gen;
+  else store.prefetching = true;
+  renderTopbar();
+  await generateDeck({
+    key, model: store.settings.model, settings: genSettings(),
+    seenList: lsGet('spielchen.seen', []), backupCards: store.backupCards,
+    onCategory: (cat, cards) => {
+      if (!cards) return;
+      gen.cards[cat] = cards;
+      if (target === 'current' && store.deck && store.deckGenId === gen.id) store.deck.setCategory(cat, cards);
+      if (target === 'current') renderTopbar();
+    },
+  });
+  gen.running = false;
+  if (target === 'next') {
+    store.prefetching = false;
+    if (Object.keys(gen.cards).length) lsSet('spielchen.nextDeck', { cards: gen.cards, savedAt: Date.now() });
+  }
+  renderTopbar();
+}
+
+/** Pick the cards for a new game: a prefetched deck if there is one, else whatever is ready (backup for the rest). */
+function deckForNewGame() {
+  const next = lsGet('spielchen.nextDeck', null);
+  if (next && next.cards && Object.keys(next.cards).length) {
+    try { localStorage.removeItem('spielchen.nextDeck'); } catch { /* ignore */ }
+    store.gen = { id: Date.now() + Math.random(), cards: next.cards, running: false };
+  } else if (!store.gen || store.gen.used) {
+    store.gen = null;
+    runGeneration('current');   // never blocks: categories swap in as they land
+  }
+  const gen = store.gen;
+  if (gen) gen.used = true;
+  store.deckGenId = gen ? gen.id : null;
+  const cards = [];
+  for (const cat of GEN_CATEGORIES) {
+    const fresh = gen && gen.cards[cat];
+    cards.push(...(fresh || store.backupCards.filter(c => c.category === cat)));
+  }
+  return cards;
+}
+
+// ---------- phone protocol ----------
+const pub = p => p ? { id: p.id, name: p.name, color: p.color, emoji: p.emoji } : null;
+
+function phoneState(role) {
+  const g = store.game;
+  const players = (g ? g.players : store.setup.players.map((p, k) => ({ ...p, name: (p.name || '').trim() || `Player ${k + 1}` }))).map(pub);
+  const base = { t: 'state', role, screen: store.screen, phase: store.phase, players, view: 'lobby' };
+  if (store.screen === 'winner' && store.result) {
+    return { ...base, view: role === 'controller' ? 'winner' : 'spectator', winner: store.result.ranking[0].name, positions: store.result.ranking.map(t => ({ name: t.name, emoji: t.emoji, color: t.color, pos: t.pos })) };
+  }
+  if (!g || store.screen !== 'board') return base;
+  const active = P(activePid());
+  base.active = pub(active);
+  base.positions = g.tokens.map((t, k) => ({ name: t.name, emoji: t.emoji, color: t.color, pos: t.pos, active: k === g.turnIdx }));
+  if (role !== 'controller') return { ...base, view: 'spectator' };
+  const ph = store.phase;
+  const ctx = store.ctx || {};
+  const turnKey = g.turnCount;
+  const timerLeftMs = store.timer ? Math.max(0, store.timer.endsAt - Date.now()) : null;
+  const cardInfo = card => {
+    const mg = MINI_GAMES[card.game];
+    return { ...card, gameName: mg.name, seconds: mg.seconds, tv: mg.tv(pname(activePid()), card), verb: R.CATEGORY_INFO[card.category].verb, quizmaster: ctx.quizmaster || null, sudden: !!ctx.sudden };
+  };
+  const holderFor = () => ctx.sudden ? null : (ctx.card && ctx.card.category === 'brains' ? pub(P(ctx.quizmaster)) : pub(active));
+  const chips = pids => pids.map(pid => pub(P(pid)));
+  switch (ph) {
+    case 'pass': return { ...base, view: 'roll', holder: pub(active), holderKey: `${turnKey}:${active.id}`, finaleNext: R.needsFinaleWithoutRoll(g) };
+    case 'pick': return { ...base, view: 'pick', finale: !!ctx.finale, holder: ctx.finale ? null : pub(active), holderKey: `${turnKey}:${active.id}` };
+    case 'card-hidden': case 'card-ready': case 'reveal': {
+      const h = holderFor();
+      return { ...base, view: 'card', card: cardInfo(ctx.card), holder: h, holderKey: `${turnKey}:${h ? h.id : 'any'}` };
+    }
+    case 'running': case 'timeup': {
+      const h = holderFor();
+      return { ...base, view: 'running', card: cardInfo(ctx.card), holder: h, holderKey: `${turnKey}:${h ? h.id : 'any'}`, timerLeftMs, timeUp: ph === 'timeup' };
+    }
+    case 'guesser': {
+      const pids = ctx.sudden ? ctx.sudden.pids : R.otherPlayers(g).map(p => p.id);
+      return { ...base, view: 'chips', title: ctx.sudden ? 'Who shouted it first?' : 'Who guessed it first?', choices: chips(pids), nobody: false, back: true };
+    }
+    case 'steal': return { ...base, view: 'chips', title: 'Did someone steal it?', choices: chips(stealOptions()), nobody: true, back: true };
+    case 'ap-ready': return { ...base, view: 'button', title: MINI_GAMES[ctx.card.game].name, text: ctx.card.prompt, label: ctx.sr ? 'First question' : 'Start the timer' };
+    case 'ap-running': return { ...base, view: 'button', title: MINI_GAMES[ctx.card.game].name, text: ctx.card.prompt, label: 'Stop early', timerLeftMs };
+    case 'ap-q': return { ...base, view: 'button', title: `Question ${ctx.sr.i + 1} of 3`, text: ctx.card.questions[ctx.sr.i].q, answer: ctx.card.questions[ctx.sr.i].a, label: 'Reveal the answer' };
+    case 'ap-a': return { ...base, view: 'chips', title: 'Who shouted it first?', choices: chips(g.players.map(p => p.id)), nobody: true };
+    case 'ap-pick': return { ...base, view: 'chips', title: ctx.card.game === 'estimateoff' ? `Who was closest? (${ctx.card.answer})` : 'Who drew the best one?', choices: chips(g.players.map(p => p.id)), nobody: true };
+    default: return { ...base, view: 'watch' };
+  }
+}
+
+function pushPhone() { if (store.net) store.net.broadcast(phoneState); }
+
+/** Messages from the controller phone. */
+function handleAction(msg) {
+  const ph = store.phase;
+  if (msg.t === 'rematch' && store.screen === 'winner') return startGame({ rematch: true });
+  if (msg.t === 'newgame' && store.screen === 'winner') return newGame();
+  if (msg.t === 'startgame' && store.screen === 'setup') return startGame();
+  if (msg.t === 'skip' && store.screen === 'howto') return leaveHowTo();
+  if (store.screen !== 'board' || store.busy) return;
+  switch (msg.t) {
+    case 'roll': if (ph === 'pass') doRoll(); break;
+    case 'start':
+      if (ph === 'card-hidden' || ph === 'card-ready') startRound();
+      else if (ph === 'reveal') { hideReveal(); startRound(); }
+      else if (ph === 'ap-ready' || ph === 'ap-running' || ph === 'ap-q') handleKey({ key: ' ', target: {}, preventDefault() {} });
+      break;
+    case 'result': if (ph === 'running' || ph === 'timeup') { if (msg.ok) onGotIt(); else onFailed(); } break;
+    case 'player':
+      if (['guesser', 'steal', 'ap-pick', 'ap-a'].includes(ph)) { if (msg.pid || ph !== 'guesser') pickPlayer(msg.pid || ''); }
+      break;
+    case 'back': if (ph === 'guesser' || ph === 'steal') setPhase('timeup'); break;
+    case 'pick': if (ph === 'pick' && R.CATEGORIES.includes(msg.category)) pickCategory(msg.category); break;
+    case 'undo': if (ph === 'pass') undo(); else if (ph === 'guesser' || ph === 'steal') setPhase('timeup'); break;
+  }
+}
+
+function startNet() {
+  store.net = new HostNet({
+    onAction: handleAction,
+    onStatus: st => {
+      store.netStatus = st;
+      store.room = store.net.code;
+      if (store.screen === 'setup') render(); else renderTopbar();
+    },
+    onController: on => {
+      if (on && store.hotseat) { store.hotseat = false; render(); }
+      pushPhone();
+    },
+  });
+  const ok = store.net.start(makeRoomCode());
+  store.room = store.net.code;
+  if (!ok) store.net = null;
+}
+
+// ---------- ticker (results + commentary) ----------
+let tickerBusy = false;
+function say(line, kind = 'info') {
+  if (!line) return;
+  store.ticker.push({ line, kind });
+  while (store.ticker.length > 2) store.ticker.shift();   // never show stale news
+  if (!tickerBusy) nextTicker();
+}
+async function nextTicker() {
+  const item = store.ticker.shift();
+  const el = $('#ticker');
+  if (!item || !el) { tickerBusy = false; return; }
+  tickerBusy = true;
+  el.innerHTML = `${icon(item.kind === 'comment' ? 'mic' : item.kind === 'good' ? 'check' : 'arrow-right')}<span>${esc(item.line)}</span>`;
+  el.className = `ticker show ${item.kind}`;
+  await wait(2600);
+  el.className = 'ticker';
+  await wait(300);
+  nextTicker();
 }
 
 // ---------- timers & clock ----------
 function updateTimerUi() {
   const fg = $('#ring-fg');
   const num = $('#ring-num');
-  if (store.timer && fg && num) {
+  if (!fg || !num) return;
+  const C = 2 * Math.PI * 88;
+  fg.style.strokeDasharray = `${C}`;
+  if (store.timer) {
     const left = Math.max(0, store.timer.endsAt - Date.now());
-    const frac = left / (store.timer.seconds * 1000);
-    const C = 2 * Math.PI * 88;
-    fg.style.strokeDasharray = `${C}`;
-    fg.style.strokeDashoffset = `${C * (1 - frac)}`;
+    fg.style.strokeDashoffset = `${C * (1 - left / (store.timer.seconds * 1000))}`;
     num.textContent = Math.ceil(left / 1000);
-    num.classList.toggle('low', left <= 5000);
-  } else if (!store.timer && fg && num) {
-    const C = 2 * Math.PI * 88;
-    fg.style.strokeDasharray = `${C}`;
-    fg.style.strokeDashoffset = store.phase === 'timeup' ? `${C}` : '0';
-    if (store.phase === 'timeup') num.textContent = '0';
+    num.parentElement.classList.toggle('low', left <= 5000);
+  } else {
+    fg.style.strokeDashoffset = ['timeup', 'ap-pick'].includes(store.phase) ? `${C}` : '0';
+    if (store.phase === 'timeup') { num.textContent = '0'; num.parentElement.classList.add('low'); }
   }
 }
 
 function startTimer(seconds, onDone) {
   store.timer = { seconds, startedAt: Date.now(), endsAt: Date.now() + seconds * 1000, lastTick: null, onDone };
 }
-
 function stopTimer() { store.timer = null; }
 
 function frame() {
@@ -472,11 +776,7 @@ function frame() {
     const left = t.endsAt - Date.now();
     const sec = Math.ceil(left / 1000);
     if (left > 0 && sec <= 5 && sec !== t.lastTick) { t.lastTick = sec; sfx.tick(); }
-    if (left <= 0) {
-      store.timer = null;
-      sfx.buzzer();
-      t.onDone && t.onDone();
-    }
+    if (left <= 0) { store.timer = null; sfx.buzzer(); t.onDone && t.onDone(); }
     updateTimerUi();
   }
   if (store.phase === 'reveal' && store.revealTimer) {
@@ -490,34 +790,28 @@ function clockTick() {
   if (store.screen !== 'board' || !store.clock || !store.game) return;
   const el = $('#clock');
   if (el) el.textContent = fmtClock();
+  const fill = $('#clock-fill');
+  if (fill) fill.style.width = `${clockFrac() * 100}%`;
   const elapsed = Date.now() - store.clock.startedAt;
+  if (!store.prefetched && elapsed >= store.prefetchAt && getKey()) { store.prefetched = true; runGeneration('next'); }
   if (elapsed >= store.clock.lastOrdersAt && store.game.lastOrders == null) {
     store.game = R.callLastOrders(store.game, store.phase !== 'pass');
     showLastOrders();
   }
   if (elapsed >= store.clock.lengthMs && !store.timeUp) {
     store.timeUp = true;
-    if (el) el.classList.add('done');
     if (store.phase === 'pass' && !store.busy) beginTurnFlow();
   }
 }
 
 async function showLastOrders() {
   const b = $('#lastorders');
-  b.innerHTML = `<div class="lo-big">LAST ORDERS</div><div class="lo-sub">Everyone gets exactly one more turn · ${store.game.lastOrders} turns left</div>`;
+  b.innerHTML = `<div class="lo-big">Last orders</div><div class="lo-sub">Everyone gets exactly one more turn · ${store.game.lastOrders} turns left</div>`;
   b.className = 'show';
   sfx.chime();
-  renderTopbar(); drawIcons();
+  renderTopbar();
   await wait(4000);
   b.className = '';
-}
-
-function toast(msg) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.className = 'show';
-  clearTimeout(store.toast);
-  store.toast = setTimeout(() => { t.className = ''; }, 2500);
 }
 
 // ---------- animation helpers ----------
@@ -533,19 +827,20 @@ async function animateMoves(moves) {
     for (let p = m.from + dir; dir > 0 ? p <= m.to : p >= m.to; p += dir) {
       store.displayPos[m.tokenId] = p;
       renderTokens();
+      hop(m.tokenId);
       sfx.hop();
-      await wait(180);
+      await wait(190);
     }
     squash(m.tokenId);
   }
   syncDisplay();
 }
 
-function squash(tokenId) {
-  const el = document.querySelector(`.token[data-id="${tokenId}"]`);
-  if (!el || reduceMotion()) return;
-  el.classList.remove('squash'); void el.offsetWidth; el.classList.add('squash');
-}
+function retrigger(el, cls) { if (!el) return; el.classList.remove(cls); void el.offsetWidth; el.classList.add(cls); }
+const tokBody = id => document.querySelector(`.token[data-id="${id}"] .tok-body`);
+function hop(id) { if (!reduceMotion()) retrigger(tokBody(id), 'hop'); }
+function squash(id) { if (!reduceMotion()) retrigger(tokBody(id), 'squash'); }
+function jumpAll() { if (!reduceMotion()) document.querySelectorAll('.tok-body').forEach((el, k) => setTimeout(() => retrigger(el, 'jump'), k * 90)); }
 
 function syncDisplay() {
   if (!store.game) return;
@@ -556,24 +851,8 @@ function syncDisplay() {
 function shakeStage(kind) {
   if (reduceMotion()) return;
   const s = $('#stage');
-  s.classList.remove('wobble', 'shake'); void s.offsetWidth; s.classList.add(kind);
+  s.classList.remove('wobble', 'shake', 'flash'); void s.offsetWidth; s.classList.add(kind);
   setTimeout(() => s.classList.remove(kind), 700);
-}
-
-function confetti(color, count = 60, el = $('#fx')) {
-  if (!el) return;
-  const colors = color ? [color] : ['var(--act)', 'var(--draw)', 'var(--words)', 'var(--brains)'];
-  for (let i = 0; i < count; i++) {
-    const c = document.createElement('i');
-    c.className = 'conf';
-    c.style.left = `${Math.random() * 100}%`;
-    c.style.background = colors[i % colors.length];
-    c.style.animationDelay = `${Math.random() * 0.4}s`;
-    c.style.setProperty('--dx', `${(Math.random() - 0.5) * 300}px`);
-    c.style.setProperty('--rot', `${Math.random() * 720}deg`);
-    el.appendChild(c);
-    setTimeout(() => c.remove(), 2600);
-  }
 }
 
 // ---------- game flow ----------
@@ -584,31 +863,41 @@ function startGame({ rematch = false } = {}) {
   store.setup.players.forEach((p, k) => { p.name = ps[k].name; });
   lsSet('spielchen.players', store.setup.players);
   const teamMode = R.teamsAllowed(ps.length) && store.setup.teamMode;
-  const valid = t => t && t.flat().length === ps.length && ps.every(p => t.flat().includes(p.id));
-  if (teamMode && !valid(store.setup.teams)) store.setup.teams = R.makeTeams(ps.map(p => p.id));
+  if (teamMode && !validTeams(store.setup.teams, ps)) store.setup.teams = R.makeTeams(ps.map(p => p.id));
+  saveSeen();
+  const lengthMs = store.settings.lengthMin * 60000;
   store.game = R.createGame({ players: ps, teams: teamMode ? store.setup.teams : null });
-  store.deck = new Deck(store.backupCards);
+  store.deck = new Deck(deckForNewGame(), Math.random, lsGet('spielchen.seen', []));
+  store.prefetchAt = Math.min(10 * 60000, Math.round(lengthMs / 2));
+  store.prefetched = false;
   store.displayPos = {};
   store.undo = [];
   store.timeUp = false;
   store.ctx = null;
-  store.card = null;
   store.result = null;
   store.seenGames = new Set();
-  const lengthMs = store.settings.lengthMin * 60000;
+  store.ticker = [];
   store.clock = { startedAt: Date.now(), lengthMs, lastOrdersAt: R.lastOrdersAtMs(lengthMs) };
   sfx.unlock();
+  $('#screen').innerHTML = '';
+  store.phase = 'idle';
   if (rematch) {
     store.screen = 'board';
-    store.phase = 'idle';
     render();
     beginTurnFlow();
   } else {
     store.screen = 'howto';
-    store.phase = 'idle';
     render();
     runHowTo();
   }
+}
+
+/** Remember used cards across games so a rematch serves new ones first (last 400 ids). */
+function saveSeen() {
+  if (!store.deck) return;
+  const prev = lsGet('spielchen.seen', []);
+  const merged = [...prev.filter(id => !store.deck.used.includes(id)), ...store.deck.used].slice(-400);
+  lsSet('spielchen.seen', merged);
 }
 
 let howtoTimer = null;
@@ -633,14 +922,13 @@ async function beginTurnFlow() {
   if (R.isOver(g, store.timeUp)) return finishGame();
   const r = R.beginTurn(g);
   if (r.skipped) {
-    const t = g.tokens.find(x => x.id === r.skippedTokenId);
     const pid = R.activePlayerId(g);
     store.game = r.state;
     store.busy = true;
-    store.ctx = { square: R.BOARD[13], pid: pid || t.memberIds[0] };
+    store.ctx = { square: R.BOARD[13], pid };
     setPhase('skipped');
-    sfx.stamp();
-    await wait(2500);
+    setTimeout(() => sfx.stamp(), 450);
+    await wait(2800);
     store.busy = false;
     store.ctx = null;
     return beginTurnFlow();
@@ -655,19 +943,16 @@ async function doRoll() {
   store.undo = [];   // once the next player rolls, the last result is final
   if (R.needsFinaleWithoutRoll(store.game)) return startPick(true);
   store.busy = true;
-  store.rolling = true;
-  store.die = 1;
+  const die = R.rollDie();
+  store.die = die;
   setPhase('rolling');
   sfx.roll();
-  const die = R.rollDie();
-  const spin = setInterval(() => { const el = $('#die'); if (el) el.textContent = 1 + Math.floor(Math.random() * 4); }, 90);
-  await wait(reduceMotion() ? 200 : 600);
-  clearInterval(spin);
-  store.rolling = false;
-  store.die = die;
-  setPhase('moving');
+  await tumble(die, 600);
+  store.phase = 'moving';
   const { state, from, to, square } = R.moveActive(store.game, die);
   store.game = state;
+  renderBoardDynamic();
+  await wait(200);
   await animateMoves([{ tokenId: activeTok().id, from, to }]);
   await wait(250);
   await land(square);
@@ -680,19 +965,24 @@ async function land(square) {
   store.ctx = { square };
   setPhase('special');
   if (square.type === 'db') { sfx.chime(); shakeStage('wobble'); }
-  else if (square.type === 'pfand') sfx.pfand();
-  else if (square.type === 'burgeramt') sfx.stamp();
-  else sfx.success();
+  else if (square.type === 'pfand') setTimeout(() => sfx.pfand(), 500);
+  else if (square.type === 'burgeramt') setTimeout(() => sfx.stamp(), 450);
+  else if (square.type === 'allplay') { sfx.fanfare(); jumpAll(); }
+  else sfx.roll();
   if (square.type === 'pfand' || square.type === 'db' || square.type === 'burgeramt') {
-    await wait(1200);
+    await wait(2300);
+    const before = store.game;
     const { state, moves } = R.applySpecial(store.game, square.type);
     store.game = state;
+    store.phase = 'resolving';
+    render();
     await animateMoves(moves);
-    await wait(moves.length ? 900 : 1300);
+    say(commentFor({ type: 'special', square: square.type }, before, state), 'comment');
+    await wait(600);
     store.busy = false;
     return endTurnFlow();
   }
-  await wait(2500);
+  await wait(2600);
   store.busy = false;
   if (square.type === 'allplay') return startAllPlay();
   if (square.type === 'wild') return startPick(false);
@@ -705,17 +995,17 @@ function startPick(finale) {
 
 function startCard(category, { finale = false, sudden = null } = {}) {
   const card = store.deck.draw(category, { hard: finale });
-  store.card = card;
-  store.ctx = { card, finale, sudden, hard: finale || card.difficulty === 'hard', washed: false };
+  const quizmaster = category === 'brains' && !sudden ? R.quizmasterId(store.game) : null;
+  store.ctx = { card, finale, sudden, quizmaster, hard: finale || card.difficulty === 'hard', washed: false, peeks: 0 };
   setPhase('card-hidden');
+  store.ctx.washed = true;
 }
 
 function reveal() {
-  store.phase = 'reveal';
-  render();
-  const endsAt = Date.now() + 6000;
+  store.ctx.peeks = (store.ctx.peeks || 0) + 1;
+  setPhase('reveal');
   const id = setTimeout(hideReveal, 6000);
-  store.revealTimer = { endsAt, id };
+  store.revealTimer = { endsAt: Date.now() + 6000, id };
 }
 
 function hideReveal() {
@@ -732,18 +1022,25 @@ function startRound() {
   setPhase('running');
 }
 
+const isBrains = () => store.ctx && store.ctx.card && store.ctx.card.category === 'brains';
+
+/** Who may steal: everyone outside the active token, except the quizmaster (they know the answer). */
+function stealOptions() {
+  return R.otherPlayers(store.game).map(p => p.id).filter(id => id !== store.ctx.quizmaster);
+}
+
 function onGotIt() {
   stopTimer();
   store.ctx.elapsedMs = Date.now() - (store.ctx.startedAt || Date.now());
   if (store.ctx.sudden) return setPhase('guesser');
-  if (store.game.teamMode) return resolveCard({ ok: true });
+  if (store.game.teamMode || isBrains()) return resolveCard({ ok: true });
   setPhase('guesser');
 }
 
 function onFailed() {
   stopTimer();
   if (store.ctx.sudden) { sfx.fail(); return startCard('brains', { sudden: store.ctx.sudden }); }
-  if (store.game.teamMode) return setPhase('steal');
+  if (store.game.teamMode || isBrains()) return setPhase('steal');
   resolveCard({ ok: false });
 }
 
@@ -757,12 +1054,16 @@ function pickPlayer(pid) {
     return resolveCard({ ok: true, guesserId: pid });
   }
   if (ph === 'steal') {
-    if (pid && !R.otherPlayers(g).some(p => p.id === pid)) return;
+    if (pid && !stealOptions().includes(pid)) return;
     return resolveCard({ ok: false, stealerId: pid || null });
   }
   if (ph === 'ap-pick') {
     if (pid && !g.players.some(p => p.id === pid)) return;
-    return resolveAllPlay(pid || null);
+    return resolveAllPlay(pid ? [pid] : []);
+  }
+  if (ph === 'ap-a') {
+    if (pid && !g.players.some(p => p.id === pid)) return;
+    return nextSpeedQuestion(pid || null);
   }
 }
 
@@ -775,19 +1076,22 @@ async function resolveCard({ ok, guesserId = null, stealerId = null }) {
   const ctx = store.ctx;
   pushUndo('timeup');
   store.busy = true;
+  store.seenGames.add(ctx.card.game);
+  const before = store.game;
   const { state, moves, won } = R.applyCardResult(store.game, {
     ok, hard: ctx.hard, finale: ctx.finale, guesserId, stealerId, elapsedMs: ok ? ctx.elapsedMs : null,
   });
   store.game = state;
   store.phase = 'resolving';
   render();
-  if (ok) { sfx.success(); confetti(`var(--${ctx.card.category})`); }
-  else { sfx.fail(); shakeStage('shake'); }
-  if (won) toast('Finale cleared!');
-  else if (stealerId) toast(`${pname(stealerId)} stole it! +1`);
-  else if (guesserId) toast(`${pname(guesserId)} guessed it! +1`);
-  else if (ok && ctx.hard && !won) toast('Hard card: +1 extra square');
+  const who = pname(activePid());
+  if (ok) { sfx.success(); confetti([`--${ctx.card.category}`], { burst: true, count: 70 }); }
+  else { sfx.fail(); shakeStage('flash'); }
+  if (won) say('Finale cleared!', 'good');
+  else if (ok) say([`${who} stays`, ctx.hard ? '+1 for a Hard card' : null, guesserId ? `${pname(guesserId)} +1 for guessing` : null].filter(Boolean).join(' · '), 'good');
+  else say([`${who} goes back`, stealerId ? `${pname(stealerId)} steals it: +1` : null].filter(Boolean).join(' · '), 'bad');
   await animateMoves(moves);
+  if (!won) say(commentFor({ type: 'card', ok, guesserId, stealerId, finale: ctx.finale }, before, state), 'comment');
   await wait(500);
   store.busy = false;
   if (won) return winByToken(R.activeToken(store.game).id, 'Cleared the Finale.');
@@ -796,20 +1100,32 @@ async function resolveCard({ ok, guesserId = null, stealerId = null }) {
 
 function startAllPlay() {
   const card = store.deck.draw('allplay');
-  store.card = card;
-  store.ctx = { card, allplay: true, washed: false };
+  store.ctx = { card, allplay: true, sr: card.game === 'speedround' ? { i: 0, score: {} } : null };
   setPhase('ap-ready');
 }
 
-async function resolveAllPlay(pid) {
-  pushUndo('ap-pick');
+function nextSpeedQuestion(pid) {
+  const sr = store.ctx.sr;
+  if (pid) { sr.score[pid] = (sr.score[pid] || 0) + 1; sfx.success(); }
+  sr.i += 1;
+  if (sr.i < store.ctx.card.questions.length) return setPhase('ap-q');
+  const best = Math.max(0, ...Object.values(sr.score));
+  const winners = best > 0 ? Object.keys(sr.score).filter(id => sr.score[id] === best) : [];
+  resolveAllPlay(winners);
+}
+
+async function resolveAllPlay(winners) {
+  pushUndo(store.ctx.sr ? 'ap-q' : 'ap-pick');
+  if (store.ctx.sr) store.undo[store.undo.length - 1].ctx = { ...store.ctx, sr: { i: 0, score: {} } };
   store.busy = true;
-  const { state, moves } = R.applyAllPlayResult(store.game, pid);
+  const before = store.game;
+  const { state, moves } = R.applyAllPlayResult(store.game, winners);
   store.game = state;
   store.phase = 'resolving';
   render();
-  if (pid) { sfx.success(); confetti(null); toast(`${pname(pid)} wins the All Play! +2`); }
+  if (winners.length) { sfx.success(); confetti(null, { burst: true, count: 90 }); say(`${winners.map(pname).join(' & ')} +2`, 'good'); }
   await animateMoves(moves);
+  say(commentFor({ type: 'allplay', winners }, before, state), 'comment');
   await wait(500);
   store.busy = false;
   endTurnFlow();
@@ -818,20 +1134,18 @@ async function resolveAllPlay(pid) {
 function endTurnFlow() {
   store.game = R.endTurn(store.game);
   store.ctx = null;
-  store.card = null;
   beginTurnFlow();
 }
 
 function undo() {
   const snap = store.undo.pop();
-  if (!snap) return toast('Nothing to undo');
+  if (!snap) return say('Nothing to undo');
   stopTimer();
   store.game = snap.game;
   store.ctx = snap.ctx;
-  store.card = snap.ctx.card;
   syncDisplay();
   setPhase(snap.phase);
-  toast('Undone. Pick the result again.');
+  say('Undone. Pick the result again.');
 }
 
 function finishGame() {
@@ -839,10 +1153,10 @@ function finishGame() {
   if (d.suddenDeath) {
     const toks = store.game.tokens.filter(t => d.suddenDeath.includes(t.id));
     const pids = toks.flatMap(t => t.memberIds);
-    toast('It’s a tie! Sudden death.');
+    say('It’s a tie! Sudden death.', 'comment');
     return startCard('brains', { sudden: { tokenIds: d.suddenDeath, pids, names: toks.map(t => t.name).join(' vs ') } });
   }
-  const reason = store.game.winnerId ? 'Cleared the Finale.' : (store.timeUp ? 'Time’s up — furthest token wins.' : 'Last orders are in — furthest token wins.');
+  const reason = store.game.winnerId ? 'Cleared the Finale' : (store.timeUp ? 'Time’s up · furthest token wins' : 'Last orders are in · furthest token wins');
   winByToken(d.winnerId, reason);
 }
 
@@ -850,22 +1164,23 @@ function winByToken(tokenId, reason) {
   const g = store.game;
   if (!g.winnerId) g.winnerId = tokenId;
   stopTimer();
+  saveSeen();
   const ranking = R.ranking(g);
-  const last = ranking[ranking.length - 1];
   store.result = {
     ranking,
-    reason,
+    reason: reason.replace(/\.$/, ''),
     stats: R.autoStats(g),
-    last,
+    last: ranking[ranking.length - 1],
     penalty: PENALTIES[Math.floor(Math.random() * PENALTIES.length)],
   };
   store.ctx = null;
-  $('#toast').className = '';
+  store.ticker = [];
   store.phase = 'over';
   store.screen = 'winner';
+  $('#screen').innerHTML = '';
   render();
   sfx.fanfare();
-  confetti(null, 140, $('#confetti'));
+  setTimeout(() => confetti(null, { count: 160 }), 900);
 }
 
 function debugJump(n) {
@@ -876,7 +1191,7 @@ function debugJump(n) {
   t.pos = n;
   store.game = g;
   syncDisplay();
-  toast(`Debug: jumped to ${n}`);
+  say(`Debug: jumped to ${n}`);
   land(R.BOARD[n]);
 }
 
@@ -888,13 +1203,15 @@ function handleKey(e) {
 
   if (store.screen === 'setup') {
     if (k === 'Enter') { e.preventDefault(); startGame(); }
+    else if (!inInput && k === 'h') { store.hotseat = !store.hotseat; render(); }
+    else if (!inInput && k === 'f') toggleFullscreen();
     return;
   }
   if (inInput) return;
 
   if (k === 'f') { toggleFullscreen(); return; }
-  if (k === 'm') { store.settings.sound = !store.settings.sound; saveSettings(); toast(store.settings.sound ? 'Sound on' : 'Muted'); return; }
-  if (k === 'h') { store.hotseat = !store.hotseat; toast(store.hotseat ? 'Hot-seat mode on' : 'Hot-seat off — the phone remote arrives in Milestone 2, so keys still work'); renderTopbar(); drawIcons(); return; }
+  if (k === 'm') { store.settings.sound = !store.settings.sound; saveSettings(); say(store.settings.sound ? 'Sound on' : 'Muted'); return; }
+  if (k === 'h') { store.hotseat = !store.hotseat; say(store.hotseat ? 'Hot-seat mode: cards show on the TV' : (store.net && store.net.connected ? 'Phone mode: cards show on the phone' : 'No phone connected yet: scan the QR code')); render(); return; }
 
   if (store.screen === 'howto') { if (k === ' ' || k === 'Enter') { e.preventDefault(); leaveHowTo(); } return; }
   if (store.screen === 'winner') {
@@ -906,11 +1223,11 @@ function handleKey(e) {
 
   // Debug jump: D, then digits, then Enter.
   if (store.debugBuf != null) {
-    if (/^[0-9]$/.test(k)) { store.debugBuf += k; toast(`Debug jump to ${store.debugBuf}…`); return; }
+    if (/^[0-9]$/.test(k)) { store.debugBuf += k; return; }
     if (k === 'Enter') { const n = parseInt(store.debugBuf, 10); store.debugBuf = null; debugJump(n); return; }
     store.debugBuf = null;
   }
-  if (k === 'd' && store.phase === 'pass') { store.debugBuf = ''; toast('Debug: type a square number, then Enter'); return; }
+  if (k === 'd' && store.phase === 'pass') { store.debugBuf = ''; return; }
 
   if (store.busy) return;
   const ph = store.phase;
@@ -921,18 +1238,24 @@ function handleKey(e) {
   switch (ph) {
     case 'pass': if (k === ' ') doRoll(); break;
     case 'pick': if (/^[1-4]$/.test(k)) pickCategory(R.CATEGORIES[+k - 1]); break;
-    case 'card-hidden': if (k === ' ') reveal(); break;
+    case 'card-hidden': if (k === ' ') { if (phoneMode()) startRound(); else reveal(); } break;
     case 'reveal': if (k === ' ') hideReveal(); break;
-    case 'card-ready': if (k === ' ') startRound(); else if (k === 'p') reveal(); break;
+    case 'card-ready': if (k === ' ') startRound(); else if (k === 'p' && !phoneMode()) reveal(); break;
     case 'running': case 'timeup': if (k === 'y') onGotIt(); else if (k === 'n') onFailed(); break;
-    case 'guesser': case 'steal': case 'ap-pick':
+    case 'guesser': case 'steal': case 'ap-pick': case 'ap-a':
       if (/^[0-6]$/.test(k)) {
         if (k === '0') { if (ph !== 'guesser') pickPlayer(''); }
         else { const p = store.game.players[+k - 1]; if (p) pickPlayer(p.id); }
-      } else if (k === 'Escape' && ph !== 'ap-pick') setPhase('timeup');
+      } else if (k === 'Escape' && (ph === 'guesser' || ph === 'steal')) setPhase('timeup');
       break;
-    case 'ap-ready': if (k === ' ') { startTimer(MINI_GAMES[store.ctx.card.game].seconds, () => { if (store.phase === 'ap-running') setPhase('ap-pick'); }); setPhase('ap-running'); } break;
+    case 'ap-ready':
+      if (k === ' ') {
+        if (store.ctx.sr) setPhase('ap-q');
+        else { startTimer(MINI_GAMES[store.ctx.card.game].seconds, () => { if (store.phase === 'ap-running') setPhase('ap-pick'); }); setPhase('ap-running'); }
+      }
+      break;
     case 'ap-running': if (k === ' ') { stopTimer(); setPhase('ap-pick'); } break;
+    case 'ap-q': if (k === ' ') setPhase('ap-a'); break;
   }
 }
 
@@ -942,11 +1265,11 @@ function pickCategory(cat) {
 }
 
 function newGame() {
+  saveSeen();
   store.screen = 'setup';
   store.game = null;
   store.clock = null;
   store.phase = 'idle';
-  store.setup.teams = null;
   render();
 }
 
@@ -963,13 +1286,32 @@ function handleClick(e) {
   const ps = store.setup.players;
   switch (act) {
     case 'settings': store.settingsOpen = !store.settingsOpen; render(); break;
-    case 'save-settings':
+    case 'save-settings': {
+      const newKey = $('#set-key').value.trim();
+      const hadKey = !!getKey();
+      if (newKey) setKey(newKey);
       store.settings.lengthMin = +$('#set-length').value;
       store.settings.sound = $('#set-sound').checked;
+      store.settings.model = $('#set-model').value;
+      store.settings.cheeky = +$('#set-cheeky').value;
+      store.settings.german = +$('#set-german').value;
       saveSettings();
       store.settingsOpen = false;
+      store.keyMsg = '';
       render();
+      if (newKey && (!hadKey || !store.gen) && store.screen === 'setup') runGeneration('current');
       break;
+    }
+    case 'close-settings': store.settingsOpen = false; store.keyMsg = ''; render(); break;
+    case 'forget-key': setKey(''); store.keyMsg = 'Key removed from this browser.'; store.gen = null; render(); break;
+    case 'test-key': {
+      const k = $('#set-key').value.trim() || getKey();
+      const msgEl = $('#key-msg');
+      if (!k) { msgEl.textContent = 'Paste a key first.'; break; }
+      msgEl.textContent = 'Testing…';
+      testKey(k, $('#set-model').value).then(r => { store.keyMsg = (r.ok ? '✓ ' : '✗ ') + r.message; const el = $('#key-msg'); if (el) { el.textContent = store.keyMsg; el.className = 'key-msg ' + (r.ok ? 'ok' : 'bad'); } });
+      break;
+    }
     case 'color': {
       const used = ps.map(p => p.color);
       let idx = TOKEN_COLORS.indexOf(ps[k].color);
@@ -1003,11 +1345,7 @@ function handleClick(e) {
 }
 
 function handleInput(e) {
-  if (e.target.classList.contains('name')) {
-    const k = +e.target.dataset.k;
-    store.setup.players[k].name = e.target.value;
-    // Update team chips without re-rendering (keeps focus).
-  }
+  if (e.target.classList.contains('name')) store.setup.players[+e.target.dataset.k].name = e.target.value;
 }
 
 // ---------- stage scaling ----------
@@ -1029,18 +1367,21 @@ setInterval(() => {
 async function boot() {
   fitStage();
   window.addEventListener('resize', fitStage);
-  window.addEventListener('load', drawIcons);
   document.addEventListener('keydown', handleKey);
   document.addEventListener('click', handleClick);
   document.addEventListener('input', handleInput);
+  document.addEventListener('input', e => { if (e.target.id === 'set-german') { const v = $('#german-val'); if (v) v.textContent = e.target.value + '%'; } });
   try {
     store.backupCards = await loadBackupDeck();
   } catch (err) {
     console.error('Could not load backup deck', err);
-    toast('Could not load the backup deck');
   }
+  startNet();
+  const next = lsGet('spielchen.nextDeck', null);
+  if (!(next && next.cards) && getKey()) runGeneration('current');   // start early: usually ready before names are typed
   render();
   setInterval(clockTick, 250);
+  setInterval(pushPhone, 2000);   // heartbeat + timer sync
   requestAnimationFrame(frame);
   // Exposed for tests and debugging (never contains the API key).
   window.__spielchen = { store, R, render };

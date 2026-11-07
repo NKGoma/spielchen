@@ -2,12 +2,19 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import * as R from '../js/rules.js';
-import { validateCard, Deck, GAMES_BY_CATEGORY } from '../js/deck.js';
+import { validateCard, Deck, GAMES_BY_CATEGORY, MINI_GAMES, seenKey } from '../js/deck.js';
+import { extractArray, cleanCards, generateDeck, userPrompt, systemPrompt } from '../js/generate.js';
+import { candidates, commentFor } from '../js/commentary.js';
 
 let passed = 0;
+const pending = [];
 const test = (name, fn) => {
-  try { fn(); passed++; console.log('  ok  ' + name); }
-  catch (e) { console.error('  FAIL ' + name + '\n       ' + e.message); process.exitCode = 1; }
+  const fail = e => { console.error('  FAIL ' + name + '\n       ' + e.message); process.exitCode = 1; };
+  try {
+    const r = fn();
+    if (r && r.then) pending.push(r.then(() => { passed++; console.log('  ok  ' + name); }, fail));
+    else { passed++; console.log('  ok  ' + name); }
+  } catch (e) { fail(e); }
 };
 
 const players = n => Array.from({ length: n }, (_, k) => ({ id: 'p' + (k + 1), name: 'P' + (k + 1), color: '#fff', emoji: 'x' }));
@@ -154,7 +161,7 @@ test('time up: furthest wins; tie → sudden death', () => {
 test('auto-stats', () => {
   const s = R.applyCardResult(R.moveActive(ffa(3), 2).state, { ok: true, guesserId: 'p2', elapsedMs: 4200 }).state;
   const st = R.autoStats(s);
-  assert.equal(st.length, 3); assert.equal(st[0].value, 'P2');
+  assert.equal(st.length, 4); assert.equal(st[0].value, 'P2');
 });
 
 console.log('deck');
@@ -192,4 +199,125 @@ test('Deck hard draw returns hard cards', () => {
   for (let i = 0; i < 10; i++) assert.equal(d.draw('act', { hard: true }).difficulty, 'hard');
 });
 
+
+console.log('quizmaster, streaks, commentary');
+test('quizmaster is never the active player or a teammate', () => {
+  let s = ffa(3);
+  for (let i = 0; i < 6; i++) { const q = R.quizmasterId(s); assert.notEqual(q, R.activePlayerId(s)); s = R.endTurn(s); }
+  assert.equal(R.quizmasterId(ffa(3)), 'p3');        // previous player (to the right)
+  let t = R.createGame({ players: players(6), teams: [['p1', 'p4'], ['p2', 'p5'], ['p3', 'p6']] });
+  const seen = new Set();
+  for (let i = 0; i < 12; i++) {
+    const q = R.quizmasterId(t);
+    assert.ok(!R.activeToken(t).memberIds.includes(q));
+    seen.add(q); t = R.endTurn(t);
+  }
+  assert.ok(seen.size >= 4, 'quizmaster rotates');
+});
+test('streaks count successes and reset on a fail', () => {
+  let s = ffa(2);
+  const turn = ok => { s = R.applyCardResult(R.moveActive(s, 1).state, { ok }).state; s = R.endTurn(R.endTurn(s)); };
+  turn(true); turn(true); turn(true);
+  assert.equal(s.stats.streak[s.tokens[0].id], 3);
+  assert.equal(s.stats.bestStreak.n, 3);
+  turn(false);
+  assert.equal(s.stats.streak[s.tokens[0].id], 0);
+  assert.equal(R.autoStats(s)[3].detail, '3 in a row');
+});
+test('leaderId: unique leader or null', () => {
+  assert.equal(R.leaderId(ffa(3)), null);
+  assert.equal(R.leaderId(at(ffa(3), 5)), ffa(3).tokens[0].id);
+  assert.equal(R.leaderId(at(at(ffa(3), 5, 0), 5, 1)), null);
+});
+test('All Play: tied winners each +2, teammates only once', () => {
+  const r = R.applyAllPlayResult(ffa(3), ['p1', 'p2']);
+  assert.deepEqual(r.state.tokens.map(t => t.pos), [2, 2, 0]);
+  const g = R.createGame({ players: players(4), teams: [['p1', 'p3'], ['p2', 'p4']] });
+  assert.equal(R.applyAllPlayResult(g, ['p1', 'p3']).state.tokens[0].pos, 2);
+});
+test('commentary: streak, lead change, steal, second DB', () => {
+  let s = ffa(3);
+  s.stats.streak = { [s.tokens[0].id]: 2 };
+  const before = R.moveActive(s, 2).state;
+  const after = R.applyCardResult(before, { ok: true }).state;
+  const keys = candidates({ type: 'card', ok: true }, before, after).map(c => c.key);
+  assert.ok(keys.includes('streak3')); assert.ok(keys.includes('lead'));
+  const st = R.applyCardResult(before, { ok: false, stealerId: 'p2' }).state;
+  assert.equal(candidates({ type: 'card', ok: false, stealerId: 'p2' }, before, st)[0].key, 'steal');
+  let d = at(ffa(3), 9); d.stats.dbVictims = { p1: 1 };
+  const d2 = R.applySpecial(d, 'db').state;
+  assert.ok(candidates({ type: 'special', square: 'db' }, d, d2).some(c => c.key === 'db2'));
+  assert.equal(typeof commentFor({ type: 'card', ok: true }, before, after), 'string');
+});
+test('TV lines name the player and never contain the secret', () => {
+  for (const c of cards) {
+    const line = MINI_GAMES[c.game].tv('Lena', c);
+    assert.ok(line.length > 10);
+    if (c.category !== 'allplay') assert.ok(line.includes('Lena'), c.game);
+    if (c.category !== 'brains' && c.category !== 'allplay') assert.ok(!line.toLowerCase().includes(c.prompt.toLowerCase()), c.id);
+    if (c.answer && c.category !== 'allplay') assert.ok(!line.includes(String(c.answer)), c.id);
+  }
+});
+test('Deck serves unseen cards first', () => {
+  const seen = cards.filter(c => c.category === 'act').slice(0, 10).map(seenKey);
+  const d = new Deck(cards, Math.random, seen);
+  const first = Array.from({ length: 5 }, () => seenKey(d.draw('act')));
+  assert.ok(first.every(k => !seen.includes(k)), first.join(','));
+});
+test('no "what does this German word mean" questions', () => {
+  const qs = cards.flatMap(c => [c.prompt, ...(c.questions || []).map(q => q.q)]);
+  assert.ok(!qs.some(q => /literally mean|what is a “|what does .* mean/i.test(q)));
+  const share = cards.filter(c => c.tone === 'cheeky').length / cards.length;
+  assert.ok(share > 0.24 && share < 0.36, 'cheeky share ' + share);
+});
+
+console.log('generation (mocked model)');
+test('extractArray finds the first JSON array through prose and fences', () => {
+  assert.deepEqual(extractArray('Sure!\n```json\n[{"a":"x]"},{"b":[1,2]}]\n``` done [9]'), [{ a: 'x]' }, { b: [1, 2] }]);
+  assert.equal(extractArray('no array here'), null);
+  assert.equal(extractArray('[{"broken": }]'), null);
+});
+test('cleanCards drops invalid, wrong-category and already-seen cards', () => {
+  const raw = [
+    { game: 'taboo', prompt: 'Pizza', forbidden: ['a', 'b', 'c', 'd'], difficulty: 'easy', tone: 'clean', german: false, hint_en: null },
+    { game: 'taboo', prompt: 'Short', forbidden: ['a'], difficulty: 'easy', tone: 'clean', german: false },
+    { game: 'charades', prompt: 'Wrong category', difficulty: 'easy', tone: 'clean', german: false },
+    { game: 'rhyme', prompt: 'Seen before', difficulty: 'easy', tone: 'clean', german: false },
+    { game: 'rhyme', prompt: 'pizza', difficulty: 'easy', tone: 'clean', german: false },
+  ];
+  const out = cleanCards(raw, 'words', new Set(['seen before']));
+  assert.deepEqual(out.map(c => c.prompt), ['Pizza']);
+  assert.ok(out[0].id.startsWith('gen-words-'));
+});
+test('closer tolerance given as a string is normalised', () => {
+  const out = cleanCards([{ game: 'closer', prompt: 'Q?', answer: 42, tolerance: '5', difficulty: 'easy', tone: 'clean', german: false }], 'brains');
+  assert.equal(out[0].tolerance, 5); assert.equal(out[0].answer, '42');
+});
+test('prompts carry the avoid list, counts and the no-translation rule', () => {
+  const u = userPrompt({ category: 'brains', avoid: ['old one'], examples: [] });
+  assert.ok(u.includes('AVOID: old one')); assert.ok(u.includes('quiz: 6')); assert.ok(u.includes('Count: 14'));
+  assert.ok(/Never ask what a German word means/.test(systemPrompt({ germanPct: 30, cleanPct: 60 })));
+  assert.ok(systemPrompt({ germanPct: 30, cleanPct: 60 }).includes('about 30% German-life'));
+});
+test('generateDeck: parallel calls, one failure falls back, short replies topped up', async () => {
+  const good = cat => JSON.stringify(cards.filter(c => c.category === cat).map(c => ({ ...c, prompt: c.prompt + ' (new)' })));
+  const calls = [];
+  const call = async ({ user }) => {
+    const cat = /Category: (\w+)/.exec(user)[1];
+    calls.push(cat);
+    if (cat === 'draw') throw new Error('boom');
+    if (cat === 'act') return '[' + JSON.stringify({ game: 'scene', prompt: 'Only one', difficulty: 'easy', tone: 'clean', german: false, hint_en: null }) + ']';
+    return good(cat);
+  };
+  const landed = [];
+  const res = await generateDeck({ key: 'k', model: 'm', settings: {}, backupCards: cards, call, onCategory: (c, list, fresh) => landed.push([c, fresh]) });
+  assert.equal(calls.length, 5);
+  assert.equal(res.draw, undefined);
+  assert.equal(res.act.length >= 6, true);
+  assert.equal(res.act[0].prompt, 'Only one');
+  assert.equal(res.brains.length, 20);
+  assert.deepEqual(landed.find(l => l[0] === 'draw'), ['draw', 0]);
+});
+
+await Promise.all(pending);
 console.log(`\n${passed} passed${process.exitCode ? ', some FAILED' : ''}`);

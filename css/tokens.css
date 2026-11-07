@@ -12,6 +12,14 @@
   --brains: #2ED19A;  /* green — Angela Merk-All */
   --alert: #E5484D;   /* Deutsche Bahn, Failed */
 
+  /* darker shades: the solid "lip" under tiles (depth without gradients) */
+  --act-deep: #2C51C4;
+  --draw-deep: #C23A7C;
+  --words-deep: #C79A12;
+  --brains-deep: #18966C;
+  --surface-deep: #0A0C10;
+  --surface-2: #20242D;
+
   --on-act: #F4F1EA;
   --on-draw: #0F1115;
   --on-words: #0F1115;

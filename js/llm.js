@@ -71,13 +71,29 @@ export async function complete({ key, model = DEFAULT_MODEL, system, user, maxTo
   throw lastErr;
 }
 
+/** Plain-words error for the TV. */
+export function friendlyError(e) {
+  if (!e) return 'Something went wrong';
+  const st = e.status || 0;
+  const m = String(e.message || '');
+  if (m === 'No API key') return 'No API key';
+  if (st === 401) return 'Key rejected (check it in Settings)';
+  if (st === 403) return 'Key not allowed to use this model';
+  if (st === 429) return 'Rate limit or credit limit: try again in a minute';
+  if (st === 400 && /credit|balance|billing/i.test(m)) return 'No API credit left on this key';
+  if (st === 400 && /model/i.test(m)) return 'Model not available on this key: switch model in Settings';
+  if (st >= 500) return 'Anthropic API is busy: try again shortly';
+  if (m === 'Timed out') return 'The API took too long';
+  if (m === 'Network error') return 'Can\u2019t reach the API';
+  return m.slice(0, 120);
+}
+
 /** "Test key": a tiny request. Resolves to { ok, message }. */
 export async function testKey(key, model = DEFAULT_MODEL) {
   try {
     await post({ model, max_tokens: 16, messages: [{ role: 'user', content: 'Say OK.' }], output_config: { effort: 'low' } }, { key, timeoutMs: 15000 });
     return { ok: true, message: 'Key works' };
   } catch (e) {
-    const m = e.status === 401 ? 'That key was rejected (401)' : e.status === 403 ? 'Key not allowed (403)' : e.message;
-    return { ok: false, message: m };
+    return { ok: false, message: friendlyError(e) };
   }
 }

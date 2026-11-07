@@ -11,12 +11,16 @@ It's a static site (plain HTML/CSS/ES modules) with no build step and no backend
 3. Type the names and press **Start**, on the laptop or on the phone.
 4. Pass the phone around. The phone shows the card behind **Hold to peek**. The TV never shows the secret.
 
+**Phone quit or died?** Just open the game page on the phone again. It remembers the room for 6 hours and rejoins by itself. The TV always shows the room code in the top bar, plus a QR card whenever the phone is gone. Any phone can take over.
+
 **No phone?** Press **H** for hot-seat mode. Cards then show on the TV for 6 s behind "Everyone except Lena, look away", and the laptop keys run everything.
 
 ### Fresh cards (optional)
 
 Open Settings (the slider icon, top right), paste an Anthropic API key and press **Test key**. The key is stored only in that browser's `localStorage`. It is never sent to the phone or anywhere except `api.anthropic.com`.
 
+- **Tell it what you're into:** on the setup screen (or the phone's lobby), type topics into "What should the cards be about?" (e.g. "90s music, football, less politics") or tap a chip. Claude replies with what it'll write, and the deck is rebuilt around your topics. "Surprise me" lets it choose.
+- Saving a key always gives a visible answer: "Key works" or the reason it didn't (rejected, no credit, rate limit…). Saved mid-game, fresh cards swap into the game you're playing.
 - Generation starts as soon as the setup screen loads, so the deck is usually ready before the names are typed. "Fresh cards 3/5" shows progress.
 - The game never waits: any category that isn't ready plays from the 96-card backup deck, and fresh cards swap in as they arrive.
 - Halfway through a game (at most 10 minutes in), the next deck is generated quietly, so **Rematch** is instant.

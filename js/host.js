@@ -7,7 +7,8 @@ import { dieHtml, tumble, momentHtml, confetti, reduceMotion } from './fx.js';
 import { commentFor } from './commentary.js';
 import { HostNet, makeRoomCode } from './net.js';
 import { generateDeck, GEN_CATEGORIES } from './generate.js';
-import { getKey, setKey, testKey, MODELS, DEFAULT_MODEL } from './llm.js';
+import { getKey, setKey, testKey, complete, friendlyError, MODELS, DEFAULT_MODEL } from './llm.js';
+import { BRIEF_CHIPS, BRIEF_SYSTEM, SURPRISE, briefPrompt, parseBrief, topicsFromText } from './brief.js';
 
 // ---------- utilities ----------
 const $ = sel => document.querySelector(sel);
@@ -69,7 +70,13 @@ const store = {
   deckGenId: null,
   prefetching: false,
   keyMsg: '',
+  brief: Object.assign({ messages: [], topics: [], chat: [] }, lsGet('spielchen.brief', {})),
+  briefBusy: false,
+  hadPhone: false,
+  phoneLostAt: 0,
 };
+const saveBrief = () => lsSet('spielchen.brief', { messages: store.brief.messages.slice(-3), topics: store.brief.topics, chat: store.brief.chat.slice(-6) });
+const topicsKey = () => JSON.stringify(store.brief.topics || []);
 const phoneMode = () => !!store.net && store.net.connected && !store.hotseat;
 
 sfx.setMuted(!store.settings.sound);
@@ -89,7 +96,12 @@ function render() {
     const f = document.activeElement;
     const k = f && f.classList && f.classList.contains('name') ? f.dataset.k : null;
     const pos = k != null ? f.selectionStart : 0;
+    const bOld = $('#brief-tv');
+    const bFocus = bOld && f === bOld;
+    const bVal = bOld ? bOld.value : '';
     app.innerHTML = renderSetup();
+    const bNew = $('#brief-tv');
+    if (bNew) { bNew.value = bVal; if (bFocus) bNew.focus(); }
     if (k != null) { const el = app.querySelector(`.name[data-k="${k}"]`); if (el) { el.focus(); try { el.setSelectionRange(pos, pos); } catch { /* ignore */ } } }
   }
   else if (store.screen === 'howto') app.innerHTML = renderHowTo();
@@ -128,18 +140,18 @@ function freshPill() {
   if (!getKey()) return `<span class="pill" title="Add an API key in Settings for fresh AI cards">${icon('layers')} Backup deck</span>`;
   const g = store.gen;
   const n = g ? GEN_CATEGORIES.filter(c => g.cards[c]).length : 0;
-  const busy = g && g.running;
-  return `<span class="pill ${n === 5 ? 'on' : ''}" title="Fresh cards from Claude">${icon('layers')} Fresh cards ${n}/5${busy ? '<i class="spin-dot"></i>' : ''}</span>`;
+  const cls = g && g.running ? 'warn' : g && g.error && n < 5 ? 'bad' : n === 5 ? 'good' : '';
+  const label = g && g.error && !g.running && n === 0 ? 'Fresh cards failed' : `Fresh cards ${n}/5`;
+  return `<span class="pill fresh ${cls}" title="${esc(g && g.error ? g.error : 'Fresh cards from Claude')}">${icon('layers')} ${label}${g && g.running ? '<i class="spin-dot"></i>' : ''}</span>`;
 }
 
 function phonePill() {
-  if (store.hotseat || !store.net) {
-    return `<span class="pill on">${icon('laptop')} Hot-seat <kbd>H</kbd></span>`;
-  }
+  if (!store.net) return `<span class="pill on">${icon('laptop')} Hot-seat <kbd>H</kbd></span>`;
+  if (store.hotseat) return `<span class="pill on">${icon('laptop')} Hot-seat <kbd>H</kbd></span><span class="pill">${icon('smartphone')} Room <b>${esc(store.room || '')}</b></span>`;
   const st = store.netStatus;
   const cls = st === 'connected' ? 'ok' : st === 'reconnecting' || st === 'starting' ? 'warn' : 'off';
-  const label = st === 'connected' ? 'Phone connected' : st === 'reconnecting' ? 'Phone reconnecting' : st === 'waiting' ? `Room ${store.room}` : st === 'starting' ? 'Opening room' : 'Phone offline';
-  return `<span class="pill on"><i class="dot ${cls}"></i>${icon('smartphone')} ${label}</span>`;
+  const label = st === 'connected' ? 'Phone' : st === 'reconnecting' ? 'Phone lost' : st === 'starting' ? 'Opening' : st === 'waiting' ? 'No phone' : 'Offline';
+  return `<span class="pill on"><i class="dot ${cls}"></i>${icon('smartphone')} ${label} · Room <b>${esc(store.room || '')}</b></span>`;
 }
 
 function phoneUrl() {
@@ -204,6 +216,7 @@ function renderSetup() {
     </div>
     <div class="setup-right">
       ${joinCard(tiles)}
+      <div class="brief-panel" id="brief-panel">${briefPanelInner()}</div>
       <button class="btn primary huge" data-act="start">Start ${icon('arrow-right')}</button>
       <p class="muted small">${store.settings.lengthMin === 2 ? '2 min test game' : store.settings.lengthMin + '-minute game'} · <kbd>Enter</kbd> to start</p>
     </div>
@@ -277,10 +290,22 @@ function renderBoardShell() {
     <div class="nowup" id="banner"></div>
     <div class="dock" id="dock"></div>
     <div class="ticker" id="ticker"></div>
+    <div class="rejoin" id="rejoin"></div>
   </div>`;
 }
 
+function renderRejoin() {
+  const el = $('#rejoin');
+  if (!el) return;
+  const lost = store.net && store.hadPhone && !store.hotseat && store.netStatus !== 'connected' && store.phoneLostAt && Date.now() - store.phoneLostAt > 5000;
+  if (!lost) { if (el.classList.contains('show')) { el.className = 'rejoin'; el.innerHTML = ''; } return; }
+  if (el.classList.contains('show')) return;
+  el.innerHTML = `<div class="rj-qr">${qrSvg(phoneUrl())}</div><div class="rj-text"><b>Phone gone? Scan, or type</b><span class="rj-code">${esc(store.room)}</span><span class="muted">or press <kbd>H</kbd> to play on the laptop</span></div>`;
+  el.className = 'rejoin show';
+}
+
 function renderBoardDynamic() {
+  renderRejoin();
   renderTokens();
   const g = store.game;
   const banner = $('#banner');
@@ -581,39 +606,129 @@ function renderSettings() {
 }
 
 // ---------- fresh decks ----------
-const genSettings = () => ({ germanPct: store.settings.german, cleanPct: 100 - Math.round(store.settings.cheeky * 0.6) });
+const genSettings = () => ({ germanPct: store.settings.german, cleanPct: 100 - Math.round(store.settings.cheeky * 0.6), topics: store.brief.topics || [] });
 
 /** Generate a deck in the background. target 'current' feeds the live game; 'next' is saved for Rematch. */
-async function runGeneration(target = 'current') {
+async function runGeneration(target = 'current', { force = false } = {}) {
   const key = getKey();
   if (!key || !store.backupCards.length) return;
-  if (target === 'current' && store.gen && store.gen.running) return;
-  const gen = { id: Date.now() + Math.random(), cards: {}, running: true };
-  if (target === 'current') store.gen = gen;
-  else store.prefetching = true;
-  renderTopbar();
+  if (target === 'current' && store.gen && store.gen.running && !force) return;
+  const gen = { id: Date.now() + Math.random(), cards: {}, running: true, status: {}, error: null, topics: topicsKey() };
+  GEN_CATEGORIES.forEach(c => { gen.status[c] = 'pending'; });
+  if (target === 'current') {
+    store.gen = gen;
+    // A game is already running: swap fresh cards into it as they land.
+    if (store.deck && (store.screen === 'board' || store.screen === 'howto')) { store.deckGenId = gen.id; gen.used = true; }
+  } else store.prefetching = true;
+  renderGenStatus();
   await generateDeck({
     key, model: store.settings.model, settings: genSettings(),
     seenList: lsGet('spielchen.seen', []), backupCards: store.backupCards,
-    onCategory: (cat, cards) => {
-      if (!cards) return;
-      gen.cards[cat] = cards;
-      if (target === 'current' && store.deck && store.deckGenId === gen.id) store.deck.setCategory(cat, cards);
-      if (target === 'current') renderTopbar();
+    onCategory: (cat, cards, fresh, err) => {
+      if (target === 'current' && store.gen !== gen) return;       // a newer brief replaced this run
+      if (cards) {
+        gen.cards[cat] = cards;
+        gen.status[cat] = 'ready';
+        if (target === 'current' && store.deck && store.deckGenId === gen.id) store.deck.setCategory(cat, cards);
+      } else {
+        gen.status[cat] = 'failed';
+        if (!gen.error) {
+          gen.error = err ? friendlyError(err) : 'The model sent no usable cards';
+          if (target === 'current') say(`Fresh cards: ${gen.error}. Playing with the backup deck.`, 'bad');
+        }
+      }
+      if (target === 'current') renderGenStatus();
     },
   });
   gen.running = false;
   if (target === 'next') {
     store.prefetching = false;
-    if (Object.keys(gen.cards).length) lsSet('spielchen.nextDeck', { cards: gen.cards, savedAt: Date.now() });
+    if (Object.keys(gen.cards).length) lsSet('spielchen.nextDeck', { cards: gen.cards, savedAt: Date.now(), topics: gen.topics });
   }
+  if (target === 'current' && store.gen === gen) renderGenStatus();
+}
+
+/** Status line for the chat panel / phone, e.g. "Writing cards… 3/5". */
+function genStatusText() {
+  if (!getKey()) return '';
+  const g = store.gen;
+  if (!g) return '';
+  const n = GEN_CATEGORIES.filter(c => g.status && g.status[c] === 'ready' || g.cards[c]).length;
+  if (g.running) return `Writing cards… ${n}/5 ready`;
+  if (g.error && n === 0) return `Couldn't make cards: ${g.error}`;
+  if (g.error) return `${n}/5 fresh · the rest from the backup deck (${g.error})`;
+  const total = GEN_CATEGORIES.reduce((a, c) => a + ((g.cards[c] || []).length), 0);
+  return `${total} fresh cards ready`;
+}
+
+function renderGenStatus() {
   renderTopbar();
+  const el = $('#brief-status');
+  if (el) el.textContent = genStatusText();
+  pushPhone();
+}
+
+// ---------- card brief chat ----------
+async function sendBrief(text) {
+  text = String(text || '').trim().slice(0, 160);
+  if (!text || store.briefBusy) return;
+  const b = store.brief;
+  const surprise = text === SURPRISE || /^surprise/i.test(text);
+  b.messages = surprise ? [] : [...b.messages, text].slice(-3);
+  b.chat = [...b.chat, { from: 'me', text }].slice(-6);
+  store.briefBusy = true;
+  renderBriefPanel();
+  let reply, topics;
+  if (surprise) {
+    topics = [];
+    reply = 'Surprise it is: a fun mix of film, music, travel, food and general knowledge.';
+  } else if (!getKey()) {
+    topics = topicsFromText(b.messages);
+    reply = `Saved: ${topics.join(', ') || 'a fun mix'}. Add an API key in Settings and I'll write the cards.`;
+  } else {
+    try {
+      const out = await complete({ key: getKey(), model: DEFAULT_MODEL, system: BRIEF_SYSTEM, user: briefPrompt(b.messages), maxTokens: 600, timeoutMs: 15000 });
+      ({ reply, topics } = parseBrief(out, b.messages));
+    } catch (e) {
+      topics = topicsFromText(b.messages);
+      reply = `(${friendlyError(e)}) I'll go with: ${topics.join(', ') || 'a fun mix'}.`;
+    }
+  }
+  b.topics = topics;
+  b.chat = [...b.chat, { from: 'claude', text: reply }].slice(-6);
+  store.briefBusy = false;
+  saveBrief();
+  try { localStorage.removeItem('spielchen.nextDeck'); } catch { /* stale: made for the old brief */ }
+  renderBriefPanel();
+  if (getKey()) runGeneration('current', { force: true });
+}
+
+function briefPanelInner() {
+  const b = store.brief;
+  const chat = b.chat.slice(-3).map(m => `<div class="bubble ${m.from}">${m.from === 'claude' ? icon('mic') : ''}<span>${esc(m.text)}</span></div>`).join('');
+  const intro = !b.chat.length ? `<div class="bubble claude">${icon('mic')}<span>${getKey() ? 'Tell me what you’re into, or tap a topic. I’ll write the deck around it.' : 'Add an API key in Settings and I’ll write cards around your topics.'}</span></div>` : '';
+  return `<div class="brief-head">${icon('message-circle')} What should the cards be about?</div>
+    <div class="brief-chat">${intro}${chat}${store.briefBusy ? '<div class="bubble claude typing"><i></i><i></i><i></i></div>' : ''}</div>
+    <div class="brief-chips">${BRIEF_CHIPS.map(c => `<button class="bchip" data-act="brief-chip" data-text="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+    <div class="brief-row"><input id="brief-tv" maxlength="160" placeholder="e.g. 90s music, football, less politics" autocomplete="off" spellcheck="false"><button class="btn primary small-btn" data-act="brief-send">Send</button></div>
+    <div class="brief-status" id="brief-status">${esc(genStatusText())}</div>`;
+}
+
+function renderBriefPanel() {
+  const el = $('#brief-panel');
+  if (el) {
+    const input = $('#brief-tv');
+    const keep = input && document.activeElement === input;
+    el.innerHTML = briefPanelInner();
+    if (keep) $('#brief-tv').focus();
+  }
+  pushPhone();
 }
 
 /** Pick the cards for a new game: a prefetched deck if there is one, else whatever is ready (backup for the rest). */
 function deckForNewGame() {
   const next = lsGet('spielchen.nextDeck', null);
-  if (next && next.cards && Object.keys(next.cards).length) {
+  if (next && next.cards && Object.keys(next.cards).length && (next.topics || '[]') === topicsKey()) {
     try { localStorage.removeItem('spielchen.nextDeck'); } catch { /* ignore */ }
     store.gen = { id: Date.now() + Math.random(), cards: next.cards, running: false };
   } else if (!store.gen || store.gen.used) {
@@ -637,7 +752,8 @@ const pub = p => p ? { id: p.id, name: p.name, color: p.color, emoji: p.emoji } 
 function phoneState(role) {
   const g = store.game;
   const players = (g ? g.players : store.setup.players.map((p, k) => ({ ...p, name: (p.name || '').trim() || `Player ${k + 1}` }))).map(pub);
-  const base = { t: 'state', role, screen: store.screen, phase: store.phase, players, view: 'lobby' };
+  const base = { t: 'state', role, screen: store.screen, phase: store.phase, players, view: 'lobby',
+    brief: store.screen === 'setup' ? { hasKey: !!getKey(), chat: store.brief.chat.slice(-2), status: store.briefBusy ? 'Claude is thinking…' : genStatusText(), chips: BRIEF_CHIPS } : null };
   if (store.screen === 'winner' && store.result) {
     return { ...base, view: role === 'controller' ? 'winner' : 'spectator', winner: store.result.ranking[0].name, positions: store.result.ranking.map(t => ({ name: t.name, emoji: t.emoji, color: t.color, pos: t.pos })) };
   }
@@ -689,6 +805,7 @@ function handleAction(msg) {
   if (msg.t === 'rematch' && store.screen === 'winner') return startGame({ rematch: true });
   if (msg.t === 'newgame' && store.screen === 'winner') return newGame();
   if (msg.t === 'startgame' && store.screen === 'setup') return startGame();
+  if (msg.t === 'brief' && store.screen === 'setup') return sendBrief(msg.text);
   if (msg.t === 'skip' && store.screen === 'howto') return leaveHowTo();
   if (store.screen !== 'board' || store.busy) return;
   switch (msg.t) {
@@ -714,6 +831,9 @@ function startNet() {
     onStatus: st => {
       store.netStatus = st;
       store.room = store.net.code;
+      try { sessionStorage.setItem('spielchen.tvroom', store.room); } catch { /* ignore */ }
+      if (st === 'connected') { store.hadPhone = true; store.phoneLostAt = 0; }
+      else if (!store.phoneLostAt) store.phoneLostAt = Date.now();
       if (store.screen === 'setup') render(); else renderTopbar();
     },
     onController: on => {
@@ -721,7 +841,9 @@ function startNet() {
       pushPhone();
     },
   });
-  const ok = store.net.start(makeRoomCode());
+  let saved = null;
+  try { saved = sessionStorage.getItem('spielchen.tvroom'); } catch { /* ignore */ }
+  const ok = store.net.start(saved || makeRoomCode(), { resume: !!saved });
   store.room = store.net.code;
   if (!ok) store.net = null;
 }
@@ -790,6 +912,7 @@ function clockTick() {
   if (store.screen !== 'board' || !store.clock || !store.game) return;
   const el = $('#clock');
   if (el) el.textContent = fmtClock();
+  renderRejoin();
   const fill = $('#clock-fill');
   if (fill) fill.style.width = `${clockFrac() * 100}%`;
   const elapsed = Date.now() - store.clock.startedAt;
@@ -1202,6 +1325,7 @@ function handleKey(e) {
   const k = e.key.length === 1 ? e.key.toLowerCase() : e.key;
 
   if (store.screen === 'setup') {
+    if (k === 'Enter' && e.target && e.target.id === 'brief-tv') { e.preventDefault(); const v = e.target.value; e.target.value = ''; sendBrief(v); return; }
     if (k === 'Enter') { e.preventDefault(); startGame(); }
     else if (!inInput && k === 'h') { store.hotseat = !store.hotseat; render(); }
     else if (!inInput && k === 'f') toggleFullscreen();
@@ -1299,7 +1423,19 @@ function handleClick(e) {
       store.settingsOpen = false;
       store.keyMsg = '';
       render();
-      if (newKey && (!hadKey || !store.gen) && store.screen === 'setup') runGeneration('current');
+      if (newKey) {
+        store.brief.chat = [...store.brief.chat, { from: 'claude', text: 'Checking your key…' }].slice(-6);
+        renderBriefPanel();
+        testKey(newKey, store.settings.model).then(r => {
+          store.brief.chat = [...store.brief.chat.filter(m => m.text !== 'Checking your key…'), { from: 'claude', text: r.ok ? 'Key works. Writing your fresh cards now.' : `That key didn't work: ${r.message}.` }].slice(-6);
+          saveBrief();
+          renderBriefPanel();
+          if (!r.ok) { say(`API key: ${r.message}`, 'bad'); store.gen = { id: 0, cards: {}, running: false, status: {}, error: r.message }; renderGenStatus(); return; }
+          say(store.screen === 'board' ? 'Key works: fresh cards will swap into this game.' : 'Key works: writing fresh cards.', 'good');
+          try { localStorage.removeItem('spielchen.nextDeck'); } catch { /* ignore */ }
+          runGeneration('current', { force: true });
+        });
+      }
       break;
     }
     case 'close-settings': store.settingsOpen = false; store.keyMsg = ''; render(); break;
@@ -1336,6 +1472,8 @@ function handleClick(e) {
     case 'teams': store.setup.teamMode = btn.checked; render(); break;
     case 'reshuffle': store.setup.teams = R.makeTeams(ps.map(p => p.id)); render(); break;
     case 'start': startGame(); break;
+    case 'brief-chip': sendBrief(btn.dataset.text); break;
+    case 'brief-send': { const i = $('#brief-tv'); if (i) { const v = i.value; i.value = ''; sendBrief(v); } break; }
     case 'skip-howto': leaveHowTo(); break;
     case 'pick-cat': pickCategory(btn.dataset.cat); break;
     case 'pick-player': if (!store.busy) pickPlayer(btn.dataset.pid); break;

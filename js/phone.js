@@ -6,11 +6,20 @@ import { CATEGORY_PLAIN } from './deck.js';
 
 const $ = s => document.querySelector(s);
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-const ssGet = k => { try { return sessionStorage.getItem(k); } catch { return null; } };
-const ssSet = (k, v) => { try { sessionStorage.setItem(k, v); } catch { /* ignore */ } };
+// localStorage (not sessionStorage) so a phone that quit the browser can rejoin the same room.
+const ssGet = k => { try { return localStorage.getItem(k); } catch { return null; } };
+const ssSet = (k, v) => { try { localStorage.setItem(k, v); } catch { /* ignore */ } };
+const REJOIN_MS = 6 * 3600 * 1000;
+function savedRoom() {
+  try {
+    const r = JSON.parse(localStorage.getItem('spielchen.room') || 'null');
+    return r && r.code && Date.now() - r.at < REJOIN_MS ? r.code : '';
+  } catch { return ''; }
+}
 
 const params = new URLSearchParams(location.search);
-let room = normaliseCode(params.get('room') || ssGet('spielchen.room') || '');
+let room = normaliseCode(params.get('room') || savedRoom() || '');
+const rejoining = !params.get('room') && !!room;
 let net = null;
 let status = 'idle';
 let state = null;
@@ -22,7 +31,7 @@ let confirmed = ssGet('spielchen.confirmed') || '';
 function connect(code) {
   room = normaliseCode(code);
   if (room.length !== 4) return render();
-  ssSet('spielchen.room', room);
+  ssSet('spielchen.room', JSON.stringify({ code: room, at: Date.now() }));
   if (net) return;
   net = new PhoneNet({
     code: room,
@@ -82,11 +91,16 @@ function render() {
     return;
   }
   if (!state) {
-    app.innerHTML = `<section class="center"><div class="spinner"></div><h2>Connecting to room ${esc(room)}…</h2><p class="muted">Keep the TV page open.</p>
+    app.innerHTML = `<section class="center"><div class="spinner"></div><h2>${rejoining ? 'Rejoining' : 'Connecting to'} room ${esc(room)}…</h2><p class="muted">Keep the TV page open.</p>
       <button class="link" data-act="change">Use a different code</button></section>`;
     return;
   }
+  const bi = $('#brief-input');
+  const bFocus = bi && document.activeElement === bi;
+  const bVal = bi ? bi.value : '';
   app.innerHTML = viewHtml(state);
+  const nb = $('#brief-input');
+  if (nb) { nb.value = bVal; if (bFocus) nb.focus(); }
   tickTimer();
 }
 
@@ -123,6 +137,19 @@ function peekZone(card) {
   </div>`;
 }
 
+function briefBox(st) {
+  const b = st.brief || {};
+  if (!b.hasKey) return `<p class="muted small">Add an API key on the TV (Settings) to get cards made for your group.</p>`;
+  const last = (b.chat || []).slice(-2).map(m => `<div class="bubble ${m.from}">${esc(m.text)}</div>`).join('');
+  return `<div class="brief">
+    <div class="brief-title">What should the cards be about?</div>
+    ${last}
+    ${b.status ? `<div class="brief-status">${esc(b.status)}</div>` : ''}
+    <div class="brief-chips">${(b.chips || []).map(c => `<button class="bchip" data-act="brief-chip" data-text="${esc(c)}">${esc(c)}</button>`).join('')}</div>
+    <div class="brief-row"><input id="brief-input" maxlength="160" placeholder="e.g. 90s music, football, Berlin" autocomplete="off"><button class="send" data-act="brief-send" aria-label="Send">${icon('arrow-right')}</button></div>
+  </div>`;
+}
+
 function viewHtml(st) {
   if (st.role === 'spectator') {
     return `<section class="center"><h2>${st.active ? `${tok(st.active)} ${esc(st.active.name)} is playing` : 'Watching'}</h2>
@@ -134,6 +161,7 @@ function viewHtml(st) {
       return `<section class="center"><div class="check">${icon('check')}</div><h1>Connected</h1>
         <p class="muted">Players on the TV:</p>
         <ul class="positions">${st.players.map(p => `<li>${tok(p)}<span>${esc(p.name)}</span></li>`).join('')}</ul>
+        ${st.screen === 'setup' ? briefBox(st) : ''}
         ${st.screen === 'howto' ? `<button class="big-btn" data-act="skip">Let's go</button>` : `<button class="big-btn" data-act="startgame">Start the game</button>`}</section>`;
     case 'watch':
       return `<section class="center watch">${icon('laptop', 'watch-ic')}<h2>Watch the TV</h2>${positionsHtml(st)}</section>`;
@@ -203,6 +231,7 @@ function tickTimer() {
   }
 }
 setInterval(tickTimer, 200);
+setInterval(() => { if (room && status === 'connected') ssSet('spielchen.room', JSON.stringify({ code: room, at: Date.now() })); }, 60000);
 
 // ---------- input ----------
 document.addEventListener('click', e => {
@@ -212,7 +241,7 @@ document.addEventListener('click', e => {
   const act = b.dataset.act;
   switch (act) {
     case 'join': connect($('#code').value); break;
-    case 'change': room = ''; ssSet('spielchen.room', ''); location.search = ''; break;
+    case 'change': try { localStorage.removeItem('spielchen.room'); } catch { /* ignore */ } location.href = location.pathname; break;
     case 'confirm': confirmed = b.dataset.key; ssSet('spielchen.confirmed', confirmed); render(); break;
     case 'roll': send({ t: 'roll' }); break;
     case 'start': send({ t: 'start' }); break;
@@ -224,11 +253,16 @@ document.addEventListener('click', e => {
     case 'claim': send({ t: 'claim' }); break;
     case 'startgame': send({ t: 'startgame' }); break;
     case 'skip': send({ t: 'skip' }); break;
+    case 'brief-chip': send({ t: 'brief', text: b.dataset.text }); break;
+    case 'brief-send': { const v = $('#brief-input').value.trim(); if (v) { send({ t: 'brief', text: v }); $('#brief-input').value = ''; } break; }
     case 'rematch': send({ t: 'rematch' }); break;
     case 'newgame': send({ t: 'newgame' }); break;
   }
 });
-document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'code') connect(e.target.value); });
+document.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.id === 'code') connect(e.target.value);
+  if (e.key === 'Enter' && e.target.id === 'brief-input') { const v = e.target.value.trim(); if (v) { send({ t: 'brief', text: v }); e.target.value = ''; } }
+});
 
 // Hold to peek: the secret is visible only while pressed.
 const peekOn = e => { const z = e.target.closest('[data-peek]'); if (z) { z.classList.add('open'); e.preventDefault(); } };

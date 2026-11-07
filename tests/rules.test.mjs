@@ -5,6 +5,9 @@ import * as R from '../js/rules.js';
 import { validateCard, Deck, GAMES_BY_CATEGORY, MINI_GAMES, seenKey } from '../js/deck.js';
 import { extractArray, cleanCards, generateDeck, userPrompt, systemPrompt } from '../js/generate.js';
 import { candidates, commentFor } from '../js/commentary.js';
+import { parseBrief, topicsFromText, briefPrompt } from '../js/brief.js';
+import { friendlyError, LlmError } from '../js/llm.js';
+import { HostNet } from '../js/net.js';
 
 let passed = 0;
 const pending = [];
@@ -317,6 +320,79 @@ test('generateDeck: parallel calls, one failure falls back, short replies topped
   assert.equal(res.act[0].prompt, 'Only one');
   assert.equal(res.brains.length, 20);
   assert.deepEqual(landed.find(l => l[0] === 'draw'), ['draw', 0]);
+});
+
+console.log('card brief, errors, room code');
+test('parseBrief: clean JSON, JSON in prose, and garbage', () => {
+  const a = parseBrief('{"reply":"Got it: 90s hits and football.","topics":["90s music","football"]}', ['90s and football']);
+  assert.deepEqual(a.topics, ['90s music', 'football']); assert.ok(a.reply.startsWith('Got it'));
+  const b = parseBrief('Sure! {"reply":"Okay","topics":["Berlin"]} hope that helps', []);
+  assert.deepEqual(b.topics, ['Berlin']);
+  const c = parseBrief('no json at all', ['Pizza, Eurovision and cats']);
+  assert.deepEqual(c.topics, ['Pizza', 'Eurovision', 'cats']);
+  assert.deepEqual(topicsFromText(['you choose']), []);
+  assert.ok(briefPrompt(['a', 'b', 'c', 'd']).startsWith('Message 1: b'));
+});
+test('generation prompt carries the topics; no topics falls back to a theme nudge', () => {
+  const u = userPrompt({ category: 'act', topics: ['90s music', 'football'] });
+  assert.ok(u.includes("The group's topics: 90s music; football")); assert.ok(!u.includes('Theme nudge'));
+  assert.ok(userPrompt({ category: 'act' }).includes('Theme nudge'));
+});
+test('generateDeck passes topics through to every call', async () => {
+  const seen = [];
+  const call = async ({ user }) => { seen.push(user); return '[]'; };
+  await generateDeck({ key: 'k', settings: { topics: ['Eurovision'] }, backupCards: cards, call });
+  assert.equal(seen.length, 5); assert.ok(seen.every(u => u.includes('Eurovision')));
+});
+test('friendly API errors', () => {
+  assert.match(friendlyError(new LlmError('invalid x-api-key', { status: 401 })), /Key rejected/);
+  assert.match(friendlyError(new LlmError('x', { status: 429 })), /Rate limit/);
+  assert.match(friendlyError(new LlmError('Your credit balance is too low', { status: 400 })), /credit/);
+  assert.match(friendlyError(new LlmError('model: not found', { status: 400 })), /Model not available/);
+  assert.match(friendlyError(new LlmError('Network error', { retryable: true })), /reach the API/);
+});
+
+// Fake PeerJS to check the host keeps its room code when the server drops it.
+class FakePeer {
+  static all = [];
+  static takenOnce = new Set();
+  constructor(id) { this.id = id; this.handlers = {}; this.destroyed = false; this.disconnected = false; FakePeer.all.push(this);
+    setTimeout(() => { if (FakePeer.takenOnce.has(id)) { FakePeer.takenOnce.delete(id); this.emit('error', { type: 'unavailable-id' }); } else this.emit('open'); }, 0); }
+  on(ev, fn) { this.handlers[ev] = fn; }
+  emit(ev, a) { this.handlers[ev] && this.handlers[ev](a); }
+  destroy() { this.destroyed = true; }
+  reconnect() {}
+}
+const tick = ms => new Promise(r => setTimeout(r, ms));
+test('HostNet: same room code after a server drop; new code only if the first open is refused', async () => {
+  globalThis.window = { Peer: FakePeer };
+  globalThis.location = { search: '' };
+  const nets = [];
+  try {
+    const net = new HostNet({ onAction() {}, onStatus() {} });
+    nets.push(net);
+    net.start('ABCD');
+    await tick(5);
+    assert.equal(net.status, 'waiting');
+    // Server drops us; on the retry the old session still holds the id.
+    FakePeer.takenOnce.add('spielchen-ABCD');
+    const p = net.peer; p.destroyed = true; p.emit('error', { type: 'socket-closed' });
+    await tick(2200);       // retry after 2 s → unavailable-id
+    await tick(4200);       // next retry after 4 s → open
+    assert.equal(net.code, 'ABCD');
+    assert.equal(net.status, 'waiting');
+    assert.ok(FakePeer.all.every(x => x.id === 'spielchen-ABCD'), FakePeer.all.map(x => x.id).join(','));
+
+    FakePeer.takenOnce.add('spielchen-WXYZ');
+    const fresh = new HostNet({ onAction() {}, onStatus() {} });
+    nets.push(fresh);
+    fresh.start('WXYZ');
+    await tick(20);
+    assert.notEqual(fresh.code, 'WXYZ');
+    assert.equal(fresh.status, 'waiting');
+  } finally {
+    nets.forEach(n => { clearInterval(n._watch); clearTimeout(n._restart); });
+  }
 });
 
 await Promise.all(pending);

@@ -40,29 +40,50 @@ export class HostNet {
     this.lastSeen = 0;
     this.peer = null;
     this.retries = 0;
+    this.opened = false;        // true once this room code has been registered with the server
+    this.everOpened = false;
   }
 
   setStatus(s) { if (s !== this.status) { this.status = s; this.onStatus(s); } }
 
-  start(code = makeRoomCode()) {
+  /** resume: this code was ours before (e.g. the TV page was refreshed), so retry it instead of picking a new one. */
+  start(code = makeRoomCode(), { resume = false } = {}) {
+    if (resume) this.opened = true;
     if (!hasPeer()) { this.setStatus('offline'); return false; }
     this.code = code;
     this.setStatus('starting');
     const peer = new window.Peer(PEER_PREFIX + code, peerOptions());
     this.peer = peer;
-    peer.on('open', () => { this.retries = 0; this.setStatus(this.controller ? 'connected' : 'waiting'); });
+    peer.on('open', () => { this.retries = 0; this.opened = true; this.everOpened = true; this.setStatus(this.controller ? 'connected' : 'waiting'); });
     peer.on('connection', conn => this._accept(conn));
     peer.on('disconnected', () => { if (!peer.destroyed) { this.setStatus('reconnecting'); setTimeout(() => { try { peer.reconnect(); } catch { /* ignore */ } }, 1000); } });
     peer.on('error', err => {
-      if (err && err.type === 'unavailable-id') { peer.destroy(); this.start(makeRoomCode()); return; }
-      if (err && (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed')) {
+      if (err && err.type === 'unavailable-id') {
+        peer.destroy();
+        // First open: the code is taken by someone else, pick a new one.
+        // Later (we reconnected while the server still held our old session): keep the same code, so phones can find us.
+        if (!this.opened) { this.start(makeRoomCode()); return; }
+        this._restartSameCode();
+        return;
+      }
+      if (err && (err.type === 'network' || err.type === 'server-error' || err.type === 'socket-error' || err.type === 'socket-closed' || err.type === 'disconnected')) {
         this.setStatus('reconnecting');
-        if (peer.destroyed && this.retries++ < 30) setTimeout(() => this.start(this.code), 2000);
+        if (peer.destroyed) this._restartSameCode();
       }
     });
     clearInterval(this._watch);
     this._watch = setInterval(() => this._watchdog(), 2000);
     return true;
+  }
+
+  _restartSameCode() {
+    this.setStatus('reconnecting');
+    if (!this.everOpened && this.retries >= 5) { this.opened = false; this.retries = 0; this.start(makeRoomCode()); return; }
+    const delay = Math.min(16000, 2000 * Math.pow(2, Math.min(this.retries, 3)));
+    this.retries++;
+    if (this.retries > 40) return;   // give up after a few minutes; hot-seat still works
+    clearTimeout(this._restart);
+    this._restart = setTimeout(() => this.start(this.code), delay);
   }
 
   _accept(conn) {
@@ -96,6 +117,12 @@ export class HostNet {
   }
 
   _watchdog() {
+    // A server reconnect that hangs silently: start over on the same code.
+    const p = this.peer;
+    if (p && p.disconnected && !p.destroyed) {
+      this._discAt = this._discAt || Date.now();
+      if (Date.now() - this._discAt > 10000) { this._discAt = 0; try { p.destroy(); } catch { /* ignore */ } this._restartSameCode(); }
+    } else this._discAt = 0;
     if (!this.controller) return;
     const quiet = Date.now() - this.lastSeen;
     if (quiet > 7000 && this.status === 'connected') this.setStatus('reconnecting');

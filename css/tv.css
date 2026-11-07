@@ -434,3 +434,38 @@ button.tile:hover { transform: translateY(-6px); }
 .settings-card { width: 960px; gap: 22px; }
 .settings-card input[type=range] { width: 360px; accent-color: var(--words); }
 .settings-card .win-actions { justify-content: flex-end; margin-top: 8px; }
+
+/* ---------- card brief chat, fresh-card status, rejoin ---------- */
+.setup-right { gap: 20px; justify-content: flex-start; padding-top: 8px; }
+.setup-right .btn.huge { font-size: 56px; padding: 18px 56px; }
+.qr-card { padding: 24px 28px; gap: 26px; }
+.qr { width: 180px; height: 180px; padding: 8px; border-radius: 16px; }
+.room-code { font-size: 72px; }
+.brief-panel { width: 100%; background: var(--surface); border-radius: 28px; padding: 22px 24px; text-align: left; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 10px 0 var(--surface-deep); }
+.brief-head { display: flex; gap: 10px; align-items: center; font-family: var(--font-display); font-weight: 800; font-size: 30px; }
+.brief-chat { display: flex; flex-direction: column; gap: 8px; max-height: 190px; overflow: hidden; justify-content: flex-end; }
+.bubble { display: flex; gap: 10px; align-items: flex-start; font-size: 22px; font-weight: 600; line-height: 1.3; padding: 10px 16px; border-radius: 18px; max-width: 92%; }
+.bubble.me { align-self: flex-end; background: var(--text); color: var(--bg); border-bottom-right-radius: 6px; }
+.bubble.claude { align-self: flex-start; background: var(--surface-2); border-bottom-left-radius: 6px; }
+.bubble.claude .ic { color: var(--words); margin-top: 3px; }
+.bubble.typing { gap: 6px; padding: 16px 18px; }
+.bubble.typing i { width: 10px; height: 10px; border-radius: 50%; background: var(--muted); animation: pulse 1s infinite; }
+.bubble.typing i:nth-child(2) { animation-delay: 0.2s; } .bubble.typing i:nth-child(3) { animation-delay: 0.4s; }
+.brief-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.bchip { border: 0; border-radius: 999px; background: var(--bg); color: var(--text); padding: 8px 16px; font-size: 20px; font-weight: 600; cursor: pointer; }
+.bchip:hover { background: var(--line); }
+.brief-row { display: flex; gap: 10px; }
+.brief-row input { flex: 1; background: var(--bg); border: 2px solid var(--line); border-radius: 16px; padding: 10px 16px; font-size: 24px; outline: none; }
+.brief-row input:focus { border-color: var(--text); }
+.brief-status { font-size: 20px; font-weight: 600; color: var(--muted); min-height: 24px; }
+.pill.fresh.warn { color: var(--words); }
+.pill.fresh.good { color: var(--brains); }
+.pill.fresh.bad { color: var(--text); background: color-mix(in srgb, var(--alert) 55%, var(--surface)); }
+.pill b { color: var(--text); letter-spacing: 0.06em; }
+.rejoin { position: absolute; left: 40px; top: 102px; z-index: 32; display: none; gap: 16px; align-items: center; background: var(--surface); border-radius: 22px; padding: 12px 22px 12px 12px; box-shadow: 0 10px 0 var(--surface-deep), 0 30px 60px rgba(0,0,0,.6), inset 0 0 0 3px #FFB020; }
+.rejoin.show { display: flex; animation: slideUp 0.3s ease-out; }
+.rj-qr { width: 96px; height: 96px; background: #fff; border-radius: 10px; padding: 5px; flex: none; }
+.rj-qr svg { width: 100%; height: 100%; display: block; }
+.rj-text { display: flex; flex-direction: column; gap: 0; font-size: 15px; white-space: nowrap; }
+.rj-text b { font-family: var(--font-display); font-size: 22px; }
+.rj-code { font-family: var(--font-display); font-weight: 800; font-size: 40px; letter-spacing: 0.06em; line-height: 1; }
